@@ -1,4 +1,4 @@
-import { DEFAULT_PERMISSIONS, verifyPassword } from '@/lib/auth';
+import { parsePermissions, verifyPassword } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { getServerSession, NextAuthOptions } from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
@@ -19,6 +19,13 @@ export const authOptions: NextAuthOptions = {
 
         const user = await prisma.user.findUnique({
           where: { email: credentials.email },
+          include: {
+            roles: {
+              include: {
+                role: true
+              }
+            }
+          }
         });
 
         if (!user) {
@@ -31,11 +38,33 @@ export const authOptions: NextAuthOptions = {
           return null;
         }
 
+        // Combine all permissions from user's roles
+        const permissions = user.roles.reduce((acc, userRole) => {
+          const rolePermissions = parsePermissions(userRole.role.permissions);
+          return {
+            CREATE_USER: acc.CREATE_USER || rolePermissions.CREATE_USER,
+            MANAGE_PRODUCTS: acc.MANAGE_PRODUCTS || rolePermissions.MANAGE_PRODUCTS,
+            CREATE_INVOICE: acc.CREATE_INVOICE || rolePermissions.CREATE_INVOICE,
+            MANAGE_CATEGORIES: acc.MANAGE_CATEGORIES || rolePermissions.MANAGE_CATEGORIES,
+            VIEW_ALL_INVOICES: acc.VIEW_ALL_INVOICES || rolePermissions.VIEW_ALL_INVOICES,
+            MANAGE_PATIENT: acc.MANAGE_PATIENT || rolePermissions.MANAGE_PATIENT,
+            SYSTEM_ADMIN: acc.SYSTEM_ADMIN || rolePermissions.SYSTEM_ADMIN,
+          };
+        }, {
+          CREATE_USER: false,
+          MANAGE_PRODUCTS: false,
+          CREATE_INVOICE: false,
+          MANAGE_CATEGORIES: false,
+          VIEW_ALL_INVOICES: false,
+          MANAGE_PATIENT: false,
+          SYSTEM_ADMIN: false,
+        });
+
         return {
           id: user.id,
           name: user.name,
           email: user.email,
-          permissions: DEFAULT_PERMISSIONS,
+          permissions,
         };
       }
     })

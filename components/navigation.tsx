@@ -11,6 +11,8 @@ export default function Navigation() {
 
   if (!session) return null;
 
+  const permissions = session.user.permissions;
+
   const handleSignOut = () => {
     signOut({ callbackUrl: '/login' });
   };
@@ -41,7 +43,14 @@ export default function Navigation() {
               >
                 Dashboard
               </Link>
-
+              {permissions.CREATE_USER && (
+                <Link
+                  href="/users"
+                  className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium"
+                >
+                  Users
+                </Link>
+              )}
             </div>
           </div>
 
@@ -84,7 +93,14 @@ export default function Navigation() {
           >
             Dashboard
           </Link>
-
+          {permissions.CREATE_USER && (
+            <Link
+              href="/users"
+              className="text-gray-600 hover:text-gray-900 block px-3 py-2 rounded-md text-base font-medium"
+            >
+              Users
+            </Link>
+          )}
         </div>
       </div>
     </nav>
