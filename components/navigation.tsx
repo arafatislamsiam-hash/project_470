@@ -71,6 +71,13 @@ export default function Navigation() {
                   <div className="px-4 py-2 text-sm text-gray-700 border-b">
                     {session.user.email}
                   </div>
+                  <Link
+                    href="/profile"
+                    className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                    onClick={() => setIsMenuOpen(false)}
+                  >
+                    Profile Settings
+                  </Link>
                   <button
                     onClick={handleSignOut}
                     className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
