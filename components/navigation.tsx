@@ -51,6 +51,14 @@ export default function Navigation() {
                   Users
                 </Link>
               )}
+              {permissions.MANAGE_CATEGORIES && (
+                <Link
+                  href="/categories"
+                  className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium"
+                >
+                  Categories
+                </Link>
+              )}
             </div>
           </div>
 
@@ -106,6 +114,14 @@ export default function Navigation() {
               className="text-gray-600 hover:text-gray-900 block px-3 py-2 rounded-md text-base font-medium"
             >
               Users
+            </Link>
+          )}
+          {permissions.MANAGE_CATEGORIES && (
+            <Link
+              href="/categories"
+              className="text-gray-600 hover:text-gray-900 block px-3 py-2 rounded-md text-base font-medium"
+            >
+              Categories
             </Link>
           )}
         </div>
