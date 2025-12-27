@@ -75,6 +75,14 @@ export default function Navigation() {
                   Patients
                 </Link>
               )}
+              {permissions.CREATE_INVOICE && (
+                <Link
+                  href="/invoices/create"
+                  className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium"
+                >
+                  Create Invoice
+                </Link>
+              )}
             </div>
           </div>
 
@@ -154,6 +162,14 @@ export default function Navigation() {
               className="text-gray-600 hover:text-gray-900 block px-3 py-2 rounded-md text-base font-medium"
             >
               Patients
+            </Link>
+          )}
+          {permissions.CREATE_INVOICE && (
+            <Link
+              href="/invoices/create"
+              className="text-gray-600 hover:text-gray-900 block px-3 py-2 rounded-md text-base font-medium"
+            >
+              Create Invoice
             </Link>
           )}
         </div>

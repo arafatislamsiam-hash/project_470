@@ -1,0 +1,824 @@
+'use client';
+
+import Navigation from '@/components/navigation';
+import { useSession } from 'next-auth/react';
+import { useRouter } from 'next/navigation';
+import { useCallback, useEffect, useRef, useState } from 'react';
+
+interface Product {
+  id: string;
+  name: string;
+  price: number | string;
+  category: {
+    id: string;
+    title: string;
+  };
+}
+
+interface Patient {
+  id: string;
+  patientName: string;
+  patientMobile: string;
+}
+
+interface InvoiceItem {
+  id: string;
+  productId: string;
+  productName: string;
+  quantity: number;
+  unitPrice: number;
+  total: number;
+  isManual: boolean;
+}
+
+export default function CreateInvoicePage() {
+  const { data: session, status } = useSession();
+  const router = useRouter();
+  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
+  const [patientSelectionMode, setPatientSelectionMode] = useState<'none' | 'new' | 'existing'>('none');
+  const [showNewPatientModal, setShowNewPatientModal] = useState(false);
+  const [mobileSearch, setMobileSearch] = useState('');
+  const [searchResults, setSearchResults] = useState<Patient[]>([]);
+  const [newPatientForm, setNewPatientForm] = useState({ patientName: '', patientMobile: '' });
+  const [products, setProducts] = useState<Product[]>([]);
+  const [invoiceItems, setInvoiceItems] = useState<InvoiceItem[]>([
+    {
+      id: '1',
+      productId: '',
+      productName: '',
+      quantity: 1,
+      unitPrice: 0,
+      total: 0,
+      isManual: false
+    }
+  ]);
+  const [branch, setBranch] = useState<string>('');
+  const [corporateId, setCorporateId] = useState<string>('');
+  const [paidAmount, setPaidAmount] = useState<number>(0);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [searchTerms, setSearchTerms] = useState<{ [key: string]: string }>({});
+  const [filteredProducts, setFilteredProducts] = useState<{ [key: string]: Product[] }>({});
+  const [showDropdowns, setShowDropdowns] = useState<{ [key: string]: boolean }>({});
+  const searchRefs = useRef<{ [key: string]: HTMLInputElement | null }>({});
+
+  // Debounced search for patient by mobile
+  const debouncedSearchPatient = useCallback(
+    async (mobile: string) => {
+      if (mobile.length > 5) {
+        try {
+          const response = await fetch(`/api/patient?search=${encodeURIComponent(mobile)}`);
+          if (response.ok) {
+            const data = await response.json();
+            setSearchResults(data.patients);
+          } else {
+            setSearchResults([]);
+          }
+        } catch (error) {
+          console.error('Error searching patient:', error);
+          setSearchResults([]);
+        }
+      } else {
+        setSearchResults([]);
+      }
+    },
+    []
+  );
+
+  // Debounce hook
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      if (patientSelectionMode === 'existing' && mobileSearch) {
+        debouncedSearchPatient(mobileSearch);
+      }
+    }, 500);
+
+    return () => clearTimeout(timeoutId);
+  }, [mobileSearch, patientSelectionMode, debouncedSearchPatient]);
+
+  useEffect(() => {
+    if (status === 'loading') return;
+    if (!session) {
+      router.push('/login');
+      return;
+    }
+    if (!session.user.permissions.CREATE_INVOICE) {
+      router.push('/dashboard');
+      return;
+    }
+    fetchProducts();
+  }, [session, status, router]);
+
+  const fetchProducts = async () => {
+    try {
+      const response = await fetch('/api/products');
+      if (response.ok) {
+        const data = await response.json();
+        setProducts(data.products);
+      }
+    } catch (error) {
+      console.error('Error fetching products:', error);
+    }
+  };
+
+  const addRow = () => {
+    const newId = Date.now().toString();
+    setInvoiceItems([
+      ...invoiceItems,
+      {
+        id: newId,
+        productId: '',
+        productName: '',
+        quantity: 1,
+        unitPrice: 0,
+        total: 0,
+        isManual: false
+      }
+    ]);
+  };
+
+  const removeRow = (id: string) => {
+    if (invoiceItems.length > 1) {
+      setInvoiceItems(invoiceItems.filter(item => item.id !== id));
+      // Clean up search states
+      const newSearchTerms = { ...searchTerms };
+      const newFilteredProducts = { ...filteredProducts };
+      const newShowDropdowns = { ...showDropdowns };
+      delete newSearchTerms[id];
+      delete newFilteredProducts[id];
+      delete newShowDropdowns[id];
+      setSearchTerms(newSearchTerms);
+      setFilteredProducts(newFilteredProducts);
+      setShowDropdowns(newShowDropdowns);
+    }
+  };
+
+  // Close dropdowns when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as Element;
+
+      // Check if click is inside any search input or dropdown
+      const isClickInsideAnySearchArea = Object.keys(searchRefs.current).some(itemId => {
+        const ref = searchRefs.current[itemId];
+        if (ref && ref.contains(target)) {
+          return true;
+        }
+
+        // Also check if click is inside the dropdown itself
+        const dropdown = ref?.parentElement?.querySelector('.absolute.z-10');
+        if (dropdown && dropdown.contains(target)) {
+          return true;
+        }
+
+        return false;
+      });
+
+      if (!isClickInsideAnySearchArea) {
+        setShowDropdowns({});
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
+
+  const handleProductSearch = (itemId: string, searchTerm: string) => {
+    setSearchTerms({ ...searchTerms, [itemId]: searchTerm });
+
+    if (searchTerm.length > 0) {
+      const filtered = products.filter(product =>
+        product.name.toLowerCase().includes(searchTerm.toLowerCase())
+      );
+      setFilteredProducts({ ...filteredProducts, [itemId]: filtered });
+      setShowDropdowns({ ...showDropdowns, [itemId]: true });
+    } else {
+      setFilteredProducts({ ...filteredProducts, [itemId]: [] });
+      setShowDropdowns({ ...showDropdowns, [itemId]: false });
+    }
+
+    // Update the item to manual if user is typing
+    const itemIndex = invoiceItems.findIndex(item => item.id === itemId);
+    if (itemIndex !== -1) {
+      const newItems = [...invoiceItems];
+      newItems[itemIndex] = {
+        ...newItems[itemIndex],
+        productName: searchTerm,
+        isManual: true,
+        productId: ''
+      };
+      setInvoiceItems(newItems);
+    }
+  };
+
+  const selectProduct = (itemId: string, product: Product) => {
+    const itemIndex = invoiceItems.findIndex(item => item.id === itemId);
+    if (itemIndex !== -1) {
+      const newItems = [...invoiceItems];
+      const unitPrice = Number(product.price);
+      const subtotal = newItems[itemIndex].quantity * unitPrice;
+      newItems[itemIndex] = {
+        ...newItems[itemIndex],
+        productId: product.id,
+        productName: product.name,
+        unitPrice,
+        total: subtotal,
+        isManual: false
+      };
+      setInvoiceItems(newItems);
+      setSearchTerms({ ...searchTerms, [itemId]: product.name });
+      setShowDropdowns({ ...showDropdowns, [itemId]: false });
+    }
+  };
+
+  const updateItem = (itemId: string, field: 'quantity' | 'unitPrice', value: number | string) => {
+    const itemIndex = invoiceItems.findIndex(item => item.id === itemId);
+    if (itemIndex !== -1) {
+      const newItems = [...invoiceItems];
+      const item = newItems[itemIndex];
+
+      if (field === 'quantity') {
+        item.quantity = Math.max(1, Number(value));
+      } else if (field === 'unitPrice') {
+        item.unitPrice = Math.max(0, Number(value));
+      }
+
+      // Recalculate totals
+      const subtotal = item.quantity * item.unitPrice;
+      item.total = subtotal;
+
+      setInvoiceItems(newItems);
+    }
+  };
+
+  const calculateSubtotal = () => {
+    return invoiceItems.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0);
+  };
+
+  const calculateGrandTotal = () => {
+    return calculateSubtotal();
+  };
+
+  const calculateDueAmount = () => {
+    return Math.max(0, calculateGrandTotal() - paidAmount);
+  };
+
+  const handleCreateNewPatient = async () => {
+    if (!session?.user?.permissions?.MANAGE_PATIENT) {
+      alert("You don't have access to create a new patient");
+      return;
+    }
+
+    if (!newPatientForm.patientName || !newPatientForm.patientMobile) {
+      setError('Patient name and mobile are required');
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/patient', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(newPatientForm),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setSelectedPatient(data.patient);
+        setPatientSelectionMode('new');
+        setShowNewPatientModal(false);
+        setNewPatientForm({ patientName: '', patientMobile: '' });
+        setError('');
+      } else {
+        const errorData = await response.json();
+        setError(errorData.error || 'Failed to create patient');
+      }
+    } catch (error) {
+      console.log(error);
+      setError('An error occurred while creating patient.');
+    }
+  };
+
+  const handleSelectExistingPatient = (foundPatient: Patient) => {
+    if (searchResults.length > 0) {
+      setSelectedPatient(foundPatient);
+      setPatientSelectionMode('existing');
+      setMobileSearch('');
+      setSearchResults([]);
+    }
+  };
+
+  const resetPatientSelection = () => {
+    setSelectedPatient(null);
+    setPatientSelectionMode('none');
+    setMobileSearch('');
+    setSearchResults([]);
+    setShowNewPatientModal(false);
+    setNewPatientForm({ patientName: '', patientMobile: '' });
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+
+    if (!selectedPatient) {
+      setError('Please select a patient before creating the invoice.');
+      setLoading(false);
+      return;
+    }
+
+    // Validate items
+    const validItems = invoiceItems.filter(item =>
+      (item.productName.trim() && item.quantity > 0 && item.unitPrice > 0)
+    );
+
+    if (validItems.length === 0) {
+      setError('Please add at least one valid product to the invoice.');
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/invoices', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          items: validItems.map(item => ({
+            productId: item.productId || null,
+            productName: item.productName,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            isManual: item.isManual
+          })),
+          patientId: selectedPatient.id,
+          branch: branch,
+          corporateId,
+          paidAmount: paidAmount
+        }),
+      });
+
+      if (response.ok) {
+        await response.json();
+        router.push('/dashboard');
+      } else {
+        const errorData = await response.json();
+        setError(errorData.error || 'Failed to create invoice');
+      }
+    } catch (error) {
+      console.log(error)
+      setError('An error occurred. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (status === 'loading') {
+    return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
+  }
+
+  if (!session) {
+    return null;
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <Navigation />
+
+      <div className="max-w-6xl mx-auto py-6 sm:px-6 lg:px-8">
+        <div className="px-4 py-6 sm:px-0">
+          <div className="bg-white shadow rounded-lg">
+            <div className="px-4 py-5 sm:px-6">
+              <h3 className="text-lg leading-6 font-medium text-gray-900">
+                Create New Invoice
+              </h3>
+              <p className="mt-1 max-w-2xl text-sm text-gray-500">
+                Search for products or enter them manually with quantities and pricing.
+              </p>
+            </div>
+
+            <form onSubmit={handleSubmit} className="border-t border-gray-200">
+              <div className="px-4 py-5 sm:p-6">
+                {error && (
+                  <div className="mb-4 rounded-md bg-red-50 p-4">
+                    <div className="text-sm text-red-700">{error}</div>
+                  </div>
+                )}
+
+                {/* Patient Selection */}
+                <div className="mb-6">
+                  <label className="block text-sm font-medium text-gray-700 mb-3">
+                    Patient Selection
+                  </label>
+
+                  {patientSelectionMode === 'none' && (
+                    <div className="flex gap-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (session?.user?.permissions?.MANAGE_PATIENT) {
+                            setShowNewPatientModal(true);
+                          } else {
+                            alert("You don't have access to create a new patient");
+                          }
+                        }}
+                        className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm font-medium"
+                      >
+                        New Patient
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPatientSelectionMode('existing')}
+                        className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 text-sm font-medium"
+                      >
+                        Existing Patient
+                      </button>
+                    </div>
+                  )}
+
+                  {patientSelectionMode === 'existing' && !selectedPatient && (
+                    <div className="space-y-3">
+                      <div>
+                        <input
+                          type="text"
+                          value={mobileSearch}
+                          onChange={(e) => setMobileSearch(e.target.value)}
+                          placeholder="Enter mobile number to search..."
+                          className="block w-full rounded-md border-gray-300 py-2 px-3 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
+                        />
+                      </div>
+                      {searchResults && searchResults.map((f) => (
+                        <div className="p-3 border border-green-200 rounded-md bg-green-50" key={f.id}>
+                          <div className="flex justify-between items-center">
+                            <div>
+                              <p className="font-medium text-green-900">{f.patientName}</p>
+                              <p className="text-sm text-green-700">{f.patientMobile}</p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleSelectExistingPatient(f)}
+                              className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700"
+                            >
+                              Select
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={resetPatientSelection}
+                        className="text-sm text-gray-600 hover:text-gray-800"
+                      >
+                        ← Back to selection
+                      </button>
+                    </div>
+                  )}
+
+                  {selectedPatient && (
+                    <div className="p-3 border border-blue-200 rounded-md bg-blue-50">
+                      <div className="flex justify-between items-center">
+                        <div>
+                          <p className="font-medium text-blue-900">{selectedPatient.patientName}</p>
+                          <p className="text-sm text-blue-700">{selectedPatient.patientMobile}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={resetPatientSelection}
+                          className="text-sm text-red-600 hover:text-red-800"
+                        >
+                          Deselect
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-4">
+                  {invoiceItems.map((item) => (
+                    <div key={item.id} className="grid grid-cols-1 gap-4 sm:grid-cols-12 p-4 border border-gray-200 rounded-lg relative">
+                      <div className="sm:col-span-4 relative">
+                        <label className="block text-sm font-medium text-gray-700">
+                          Product Name
+                        </label>
+                        <input
+                          ref={el => { searchRefs.current[item.id] = el; }}
+                          type="text"
+                          value={searchTerms[item.id] || item.productName}
+                          onChange={(e) => handleProductSearch(item.id, e.target.value)}
+                          className="mt-1 block w-full rounded-md border-gray-300 py-2 px-3 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
+                          placeholder="Search products or enter manually..."
+                        />
+
+                        {/* Dropdown for search results */}
+                        {showDropdowns[item.id] && (
+                          <div className="absolute z-10 mt-1 w-full bg-white shadow-lg max-h-60 rounded-md py-1 text-base ring-1 ring-black ring-opacity-5 overflow-auto">
+                            {filteredProducts[item.id]?.length > 0 ? (
+                              filteredProducts[item.id].map((product) => (
+                                <div
+                                  key={product.id}
+                                  className="cursor-pointer select-none relative py-2 pl-3 pr-9 hover:bg-blue-50"
+                                  onMouseDown={(e) => {
+                                    e.preventDefault();
+                                    selectProduct(item.id, product);
+                                  }}
+                                >
+                                  <div className="flex items-center justify-between">
+                                    <span className="font-medium text-gray-900">
+                                      {product.name}
+                                    </span>
+                                    <span className="text-sm text-gray-500">
+                                      ৳{Number(product.price).toFixed(2)}
+                                    </span>
+                                  </div>
+                                  <span className="text-xs text-gray-400">
+                                    {product.category.title}
+                                  </span>
+                                </div>
+                              ))
+                            ) : searchTerms[item.id]?.trim() && (
+                              <div
+                                className="cursor-pointer select-none relative py-2 pl-3 pr-9 hover:bg-yellow-50 border-t border-gray-100"
+                                onClick={() => {
+                                  const itemIndex = invoiceItems.findIndex(invoiceItem => invoiceItem.id === item.id);
+                                  if (itemIndex !== -1) {
+                                    const newItems = [...invoiceItems];
+                                    newItems[itemIndex] = {
+                                      ...newItems[itemIndex],
+                                      isManual: true,
+                                      productId: '',
+                                      productName: searchTerms[item.id].trim(),
+                                      unitPrice: 0
+                                    };
+                                    setInvoiceItems(newItems);
+                                    setShowDropdowns({ ...showDropdowns, [item.id]: false });
+                                  }
+                                }}
+                              >
+                                <div className="flex items-center justify-between">
+                                  <span className="font-medium text-gray-900">
+                                    Add `{searchTerms[item.id].trim()}` manually
+                                  </span>
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800">
+                                    Manual
+                                  </span>
+                                </div>
+                                <span className="text-xs text-gray-400">
+                                  Click to add as custom product
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className='w-full col-span-8 grid sm:grid-cols-3 items-center gap-5'>
+
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700">
+                            Quantity
+                          </label>
+                          <input
+                            type="number"
+                            min="1"
+                            value={item.quantity}
+                            onChange={(e) => updateItem(item.id, 'quantity', parseInt(e.target.value) || 1)}
+                            className="mt-1 block w-full rounded-md border-gray-300 py-2 px-3 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700">
+                            Unit Price (৳)
+                          </label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={item.unitPrice}
+                            onChange={(e) => updateItem(item.id, 'unitPrice', parseFloat(e.target.value) || 0)}
+                            className="mt-1 block w-full rounded-md border-gray-300 py-2 px-3 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
+                            disabled={(!item.isManual && item.productId) ? true : false}
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700">
+                            Total
+                          </label>
+                          <input
+                            type="text"
+                            value={`৳${item.total.toFixed(2)}`}
+                            disabled
+                            className="mt-1 block w-full rounded-md border-gray-300 bg-gray-50 py-2 px-3 text-gray-500 sm:text-sm"
+                          />
+                        </div>
+                      </div>
+
+
+                      <div className="flex items-end">
+                        {invoiceItems.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => removeRow(item.id)}
+                            className="rounded-md bg-red-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-500"
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </div>
+
+                      {item.isManual && (
+                        <div className="sm:col-span-12">
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+                            Manual Entry
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-4">
+                  <button
+                    type="button"
+                    onClick={addRow}
+                    className="rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-500"
+                  >
+                    + Add Product
+                  </button>
+                </div>
+
+                {/* Paid Amount Section */}
+                <div className="mt-6 border-t pt-6">
+                  <h4 className="text-lg font-medium text-gray-900 mb-4">Payment Information</h4>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">
+                        Paid Amount (৳)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={paidAmount}
+                        onChange={(e) => setPaidAmount(parseFloat(e.target.value) || 0)}
+                        className="mt-1 block w-full rounded-md border-gray-300 py-2 px-3 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
+                        placeholder="0.00"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Branch Selection and corporate id */}
+                <div className='mt-6 border-t pt-6'>
+                  <h4 className="text-lg font-medium text-gray-900 mb-4">{"Branch & Corporate ID"}</h4>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">
+                        Select Branch
+                      </label>
+                      <select
+                        value={branch}
+                        onChange={(e) => setBranch(e.target.value)}
+                        className="mt-1 block w-full rounded-md border-gray-300 py-2 px-3 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
+                      >
+                        <option value="Hathazari Branch">Hathazari Branch</option>
+                        <option value="Kazir Dewri Branch">Kazir Dewri Branch</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">
+                        Corporate ID
+                      </label>
+                      <input
+                        type="text"
+                        value={corporateId}
+                        placeholder='Enter Corporate ID'
+                        onChange={(e) => setCorporateId(e.target.value)}
+                        className="mt-1 block w-full rounded-md border-gray-300 py-2 px-3 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Totals Section */}
+                <div className="mt-6 border-t pt-4">
+                  <div className="flex justify-end">
+                    <div className="w-64 space-y-2">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-600">Subtotal:</span>
+                        <span className="font-medium">৳{calculateSubtotal().toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between text-lg font-semibold border-t pt-2">
+                        <span>Grand Total:</span>
+                        <span>৳{calculateGrandTotal().toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between text-sm text-green-600">
+                        <span>Paid:</span>
+                        <span>৳{paidAmount.toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between text-sm font-medium text-orange-600">
+                        <span>Due:</span>
+                        <span>৳{calculateDueAmount().toFixed(2)}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-gray-50 px-4 py-3 text-right sm:px-6">
+                <button
+                  type="button"
+                  onClick={() => router.back()}
+                  className="mr-3 rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-green-500 disabled:opacity-50"
+                >
+                  {loading ? 'Generating...' : 'Generate Invoice'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      {/* New Patient Modal */}
+      {showNewPatientModal && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+          <div className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+            <div className="mt-3">
+              <h3 className="text-lg font-medium text-gray-900 mb-4">
+                Create New Patient
+              </h3>
+
+              {error && (
+                <div className="mb-4 rounded-md bg-red-50 p-4">
+                  <div className="text-sm text-red-700">{error}</div>
+                </div>
+              )}
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">
+                    Patient Name
+                  </label>
+                  <input
+                    type="text"
+                    value={newPatientForm.patientName}
+                    onChange={(e) => setNewPatientForm({ ...newPatientForm, patientName: e.target.value })}
+                    className="mt-1 block w-full rounded-md border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm border"
+                    placeholder="Enter patient name"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">
+                    Mobile Number
+                  </label>
+                  <input
+                    type="text"
+                    value={newPatientForm.patientMobile}
+                    onChange={(e) => setNewPatientForm({ ...newPatientForm, patientMobile: e.target.value })}
+                    className="mt-1 block w-full rounded-md border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm border"
+                    placeholder="Enter mobile number"
+                  />
+                </div>
+
+                <div className="flex justify-end space-x-3 pt-4">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowNewPatientModal(false);
+                      setNewPatientForm({ patientName: '', patientMobile: '' });
+                      setError('');
+                    }}
+                    className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCreateNewPatient}
+                    className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700"
+                  >
+                    Create Patient
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
