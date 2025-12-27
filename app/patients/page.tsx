@@ -2,8 +2,8 @@
 
 import Navigation from '@/components/navigation';
 import { useSession } from 'next-auth/react';
-import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { Suspense, useEffect, useState } from 'react';
 
 interface Patient {
   id: string;
@@ -16,11 +16,14 @@ interface Patient {
 function PatientsContent() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const pathname = usePathname();
   const [patients, setPatients] = useState<Patient[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingPatient, setEditingPatient] = useState<Patient | null>(null);
   const [error, setError] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
   const [formData, setFormData] = useState({
     patientName: '',
     patientMobile: ''
@@ -39,6 +42,12 @@ function PatientsContent() {
     fetchPatients();
   }, [session, status, router]);
 
+  useEffect(() => {
+    // Read query parameters on page load
+    const search = searchParams.get('search') || '';
+    setSearchTerm(search);
+  }, [searchParams]);
+
   const fetchPatients = async () => {
     try {
       const response = await fetch('/api/patient');
@@ -55,7 +64,25 @@ function PatientsContent() {
     }
   };
 
-  const filteredPatients = patients;
+  const updateQueryParams = (search: string) => {
+    const params = new URLSearchParams();
+    if (search) params.set('search', search);
+
+    const newUrl = params.toString() ? `${pathname}?${params.toString()}` : pathname;
+    router.push(newUrl, { scroll: false });
+  };
+
+  const handleSearchChange = (value: string) => {
+    setSearchTerm(value);
+    updateQueryParams(value);
+  };
+
+  // Filter patients based on search term
+  const filteredPatients = patients.filter(patient => {
+    const matchesName = patient.patientName.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesMobile = patient.patientMobile.includes(searchTerm);
+    return matchesName || matchesMobile;
+  });
 
   const handleEditPatient = (patient: Patient) => {
     setEditingPatient(patient);
@@ -164,6 +191,41 @@ function PatientsContent() {
 
           {/* Patients List */}
           <div className="bg-white shadow overflow-hidden sm:rounded-md">
+            <div className='p-4 border-b border-gray-200'>
+              <div className="flex flex-col sm:flex-row gap-4">
+                {/* Search Input */}
+                <div className="flex-1">
+                  <label htmlFor="search" className="block text-sm font-medium text-gray-700 mb-2">
+                    Search Patients
+                  </label>
+                  <input
+                    type="text"
+                    id="search"
+                    placeholder="Search by patient name or mobile number..."
+                    value={searchTerm}
+                    onChange={(e) => handleSearchChange(e.target.value)}
+                    className="block w-full rounded-md border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm border"
+                  />
+                </div>
+              </div>
+
+              {/* Results Summary */}
+              {searchTerm && (
+                <div className="mt-4 text-sm text-gray-600">
+                  Showing {filteredPatients.length} of {patients.length} patients
+                  {` matching "${searchTerm}"`}
+                  <button
+                    onClick={() => {
+                      setSearchTerm('');
+                      updateQueryParams('');
+                    }}
+                    className="ml-2 text-blue-600 hover:text-blue-800 underline"
+                  >
+                    Clear search
+                  </button>
+                </div>
+              )}
+            </div>
             {filteredPatients.length > 0 ? (
               <ul className="divide-y divide-gray-200">
                 {filteredPatients.map((patient) => (
@@ -212,13 +274,27 @@ function PatientsContent() {
               </ul>
             ) : (
               <div className="text-center py-12">
-                <div className="text-gray-500">No patients found.</div>
-                <button
-                  onClick={() => setShowModal(true)}
-                  className="mt-4 inline-flex items-center rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
-                >
-                  Add First Patient
-                </button>
+                <div className="text-gray-500">
+                  {patients.length === 0 ? 'No patients found.' : 'No patients match your current search.'}
+                </div>
+                {patients.length === 0 ? (
+                  <button
+                    onClick={() => setShowModal(true)}
+                    className="mt-4 inline-flex items-center rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
+                  >
+                    Add First Patient
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setSearchTerm('');
+                      updateQueryParams('');
+                    }}
+                    className="mt-4 inline-flex items-center rounded-md bg-gray-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-gray-700"
+                  >
+                    Clear Search
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -298,6 +374,8 @@ function PatientsContent() {
 
 export default function PatientsPage() {
   return (
-    <PatientsContent />
+    <Suspense fallback={<div>Loading...</div>}>
+      <PatientsContent />
+    </Suspense>
   );
 }
