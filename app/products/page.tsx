@@ -2,8 +2,8 @@
 
 import Navigation from '@/components/navigation';
 import { useSession } from 'next-auth/react';
-import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { Suspense, useEffect, useState } from 'react';
 
 interface Product {
   id: string;
@@ -24,6 +24,8 @@ interface Category {
 function ProductsContent() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const pathname = usePathname();
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
@@ -31,6 +33,7 @@ function ProductsContent() {
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('');
   const [formData, setFormData] = useState({
     name: '',
     price: '',
@@ -50,6 +53,14 @@ function ProductsContent() {
     }
     fetchData();
   }, [session, status, router]);
+
+  useEffect(() => {
+    // Read query parameters on page load
+    const category = searchParams.get('category') || '';
+    const search = searchParams.get('search') || '';
+    setSelectedCategory(category);
+    setSearchTerm(search);
+  }, [searchParams]);
 
   const fetchData = async () => {
     try {
@@ -72,9 +83,31 @@ function ProductsContent() {
     }
   };
 
-  const filteredProducts = products.filter(product =>
-    product.name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const updateQueryParams = (search: string, category: string) => {
+    const params = new URLSearchParams();
+    if (search) params.set('search', search);
+    if (category) params.set('category', category);
+
+    const newUrl = params.toString() ? `${pathname}?${params.toString()}` : pathname;
+    router.push(newUrl, { scroll: false });
+  };
+
+  const handleSearchChange = (value: string) => {
+    setSearchTerm(value);
+    updateQueryParams(value, selectedCategory);
+  };
+
+  const handleCategoryChange = (value: string) => {
+    setSelectedCategory(value);
+    updateQueryParams(searchTerm, value);
+  };
+
+  // Filter products based on search term and selected category
+  const filteredProducts = products.filter(product => {
+    const matchesSearch = product.name.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesCategory = !selectedCategory || product.category.id === selectedCategory;
+    return matchesSearch && matchesCategory;
+  });
 
   const handleEditProduct = (product: Product) => {
     setEditingProduct(product);
@@ -178,21 +211,62 @@ function ProductsContent() {
 
           {/* Products List */}
           <div className="bg-white shadow overflow-hidden sm:rounded-md">
-            <div className="p-4 border-b border-gray-200">
-              <label htmlFor="search" className="block text-sm font-medium text-gray-700 mb-2">
-                Search Products
-              </label>
-              <input
-                type="text"
-                id="search"
-                placeholder="Search by product name..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="block w-full rounded-md border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm border"
-              />
-              {searchTerm && (
-                <div className="mt-2 text-sm text-gray-600">
-                  Showing {filteredProducts.length} of {products.length} products matching "{searchTerm}"
+            <div className='p-4 border-b border-gray-200'>
+              <div className="flex flex-col sm:flex-row gap-4">
+                {/* Search Input */}
+                <div className="flex-1">
+                  <label htmlFor="search" className="block text-sm font-medium text-gray-700 mb-2">
+                    Search Products
+                  </label>
+                  <input
+                    type="text"
+                    id="search"
+                    placeholder="Search by product name..."
+                    value={searchTerm}
+                    onChange={(e) => handleSearchChange(e.target.value)}
+                    className="block w-full rounded-md border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm border"
+                  />
+                </div>
+
+                {/* Category Filter */}
+                <div className="flex-1">
+                  <label htmlFor="category" className="block text-sm font-medium text-gray-700 mb-2">
+                    Filter by Category
+                  </label>
+                  <select
+                    id="category"
+                    value={selectedCategory}
+                    onChange={(e) => handleCategoryChange(e.target.value)}
+                    className="block w-full rounded-md border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm border"
+                  >
+                    <option value="">All Categories</option>
+                    {categories.map((category) => (
+                      <option key={category.id} value={category.id}>
+                        {category.title}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Results Summary */}
+              {(searchTerm || selectedCategory) && (
+                <div className="mt-4 text-sm text-gray-600">
+                  Showing {filteredProducts.length} of {products.length} products
+                  {searchTerm && ` matching "${searchTerm}"`}
+                  {selectedCategory && ` in ${categories.find(c => c.id === selectedCategory)?.title || 'selected category'}`}
+                  {(searchTerm || selectedCategory) && (
+                    <button
+                      onClick={() => {
+                        setSearchTerm('');
+                        setSelectedCategory('');
+                        updateQueryParams('', '');
+                      }}
+                      className="ml-2 text-blue-600 hover:text-blue-800 underline"
+                    >
+                      Clear filters
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -247,14 +321,27 @@ function ProductsContent() {
             ) : (
               <div className="text-center py-12">
                 <div className="text-gray-500">
-                  No products found.
+                  {products.length === 0 ? 'No products found.' : 'No products match your current filters.'}
                 </div>
-                <button
-                  onClick={() => setShowModal(true)}
-                  className="mt-4 inline-flex items-center rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
-                >
-                  Create First Product
-                </button>
+                {products.length === 0 ? (
+                  <button
+                    onClick={() => setShowModal(true)}
+                    className="mt-4 inline-flex items-center rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
+                  >
+                    Create First Product
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setSearchTerm('');
+                      setSelectedCategory('');
+                      updateQueryParams('', '');
+                    }}
+                    className="mt-4 inline-flex items-center rounded-md bg-gray-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-gray-700"
+                  >
+                    Clear Filters
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -367,6 +454,8 @@ function ProductsContent() {
 
 export default function ProductsPage() {
   return (
-    <ProductsContent />
+    <Suspense fallback={<div>Loading...</div>}>
+      <ProductsContent />
+    </Suspense>
   );
 }
