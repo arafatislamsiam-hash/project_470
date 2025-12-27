@@ -30,6 +30,7 @@ function ProductsContent() {
   const [showModal, setShowModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [error, setError] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
   const [formData, setFormData] = useState({
     name: '',
     price: '',
@@ -71,7 +72,9 @@ function ProductsContent() {
     }
   };
 
-  const filteredProducts = products;
+  const filteredProducts = products.filter(product =>
+    product.name.toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
   const handleEditProduct = (product: Product) => {
     setEditingProduct(product);
@@ -175,6 +178,24 @@ function ProductsContent() {
 
           {/* Products List */}
           <div className="bg-white shadow overflow-hidden sm:rounded-md">
+            <div className="p-4 border-b border-gray-200">
+              <label htmlFor="search" className="block text-sm font-medium text-gray-700 mb-2">
+                Search Products
+              </label>
+              <input
+                type="text"
+                id="search"
+                placeholder="Search by product name..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="block w-full rounded-md border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm border"
+              />
+              {searchTerm && (
+                <div className="mt-2 text-sm text-gray-600">
+                  Showing {filteredProducts.length} of {products.length} products matching "{searchTerm}"
+                </div>
+              )}
+            </div>
             {filteredProducts.length > 0 ? (
               <ul className="divide-y divide-gray-200">
                 {filteredProducts.map((product) => (
