@@ -13,11 +13,15 @@ export type InvoiceItemInput = {
   productName?: string;
   quantity: number;
   unitPrice?: number;
+  discount?: number;
+  discountType?: string;
   isManual?: boolean;
 };
 
 export type InvoicePayload = {
   items: InvoiceItemInput[];
+  discount?: number;
+  discountType?: string;
   patientId: string;
   branch?: string | null;
   paidAmount?: number;
@@ -83,6 +87,7 @@ async function buildInvoiceItems(items: InvoiceItemInput[]) {
 
   const invoiceItems: Prisma.InvoiceItemCreateWithoutInvoiceInput[] = [];
   let calculatedSubtotal = 0;
+  let totalItemDiscounts = 0;
 
   for (const item of items) {
     let productId: string | null = null;
@@ -105,13 +110,30 @@ async function buildInvoiceItems(items: InvoiceItemInput[]) {
     }
 
     const quantity = normalizeNumber(item.quantity);
-    const total = quantity * unitPrice;
-    calculatedSubtotal += total;
+    const itemSubtotal = quantity * unitPrice;
+    const itemDiscount = normalizeNumber(item.discount);
+    const itemDiscountType = item.discountType || 'percentage';
+
+    let itemDiscountAmount = 0;
+    if (itemDiscount > 0) {
+      if (itemDiscountType === 'percentage') {
+        itemDiscountAmount = (itemSubtotal * itemDiscount) / 100;
+      } else {
+        itemDiscountAmount = Math.min(itemDiscount, itemSubtotal);
+      }
+    }
+
+    const total = itemSubtotal - itemDiscountAmount;
+    calculatedSubtotal += itemSubtotal;
+    totalItemDiscounts += itemDiscountAmount;
 
     invoiceItems.push({
       productName,
       quantity,
       unitPrice,
+      discount: itemDiscount,
+      discountType: itemDiscountType,
+      discountAmount: itemDiscountAmount,
       total,
       isManual: item.isManual || false,
       product: productId ? { connect: { id: productId } } : undefined,
@@ -121,6 +143,32 @@ async function buildInvoiceItems(items: InvoiceItemInput[]) {
   return {
     invoiceItems,
     calculatedSubtotal,
+    totalItemDiscounts,
+  };
+}
+
+function calculateDiscounts(
+  calculatedSubtotal: number,
+  totalItemDiscounts: number,
+  discount: number,
+  discountType: string
+) {
+  const subtotalAfterItemDiscounts = calculatedSubtotal - totalItemDiscounts;
+  let calculatedDiscountAmount = 0;
+
+  if (discount > 0) {
+    if (discountType === 'percentage') {
+      calculatedDiscountAmount = (subtotalAfterItemDiscounts * discount) / 100;
+    } else {
+      calculatedDiscountAmount = Math.min(discount, subtotalAfterItemDiscounts);
+    }
+  }
+
+  const finalTotal = Math.max(0, calculatedSubtotal - totalItemDiscounts - calculatedDiscountAmount);
+
+  return {
+    calculatedDiscountAmount,
+    finalTotal,
   };
 }
 
@@ -129,8 +177,17 @@ export async function createInvoiceForUser(payload: InvoicePayload, user?: Sessi
   ensureCanCreateInvoice(user);
   await ensurePatientExists(payload.patientId);
 
+  const discount = normalizeNumber(payload.discount);
+  const discountType = payload.discountType || 'percentage';
   const paidAmount = normalizeNumber(payload.paidAmount);
-  const { invoiceItems, calculatedSubtotal } = await buildInvoiceItems(payload.items);
+
+  const { invoiceItems, calculatedSubtotal, totalItemDiscounts } = await buildInvoiceItems(payload.items);
+  const { calculatedDiscountAmount, finalTotal } = calculateDiscounts(
+    calculatedSubtotal,
+    totalItemDiscounts,
+    discount,
+    discountType
+  );
 
   const invoiceNo = await generateInvoiceNumber();
 
@@ -142,10 +199,10 @@ export async function createInvoiceForUser(payload: InvoicePayload, user?: Sessi
       patient: { connect: { id: payload.patientId } },
       user: { connect: { id: user.id } },
       subtotal: calculatedSubtotal,
-      discount: 0,
-      discountType: 'percentage',
-      discountAmount: 0,
-      totalAmount: calculatedSubtotal,
+      discount,
+      discountType,
+      discountAmount: calculatedDiscountAmount,
+      totalAmount: finalTotal,
       paidAmount,
       items: {
         create: invoiceItems,

@@ -27,6 +27,9 @@ interface InvoiceItem {
   productName: string;
   quantity: number;
   unitPrice: number;
+  discount: number;
+  discountType: 'percentage' | 'fixed';
+  discountAmount: number;
   total: number;
   isManual: boolean;
 }
@@ -48,10 +51,15 @@ export default function CreateInvoicePage() {
       productName: '',
       quantity: 1,
       unitPrice: 0,
+      discount: 0,
+      discountType: 'percentage',
+      discountAmount: 0,
       total: 0,
       isManual: false
     }
   ]);
+  const [discount, setDiscount] = useState<number>(0);
+  const [discountType, setDiscountType] = useState<'percentage' | 'fixed'>('percentage');
   const [branch, setBranch] = useState<string>('');
   const [corporateId, setCorporateId] = useState<string>('');
   const [paidAmount, setPaidAmount] = useState<number>(0);
@@ -131,6 +139,9 @@ export default function CreateInvoicePage() {
         productName: '',
         quantity: 1,
         unitPrice: 0,
+        discount: 0,
+        discountType: 'percentage',
+        discountAmount: 0,
         total: 0,
         isManual: false
       }
@@ -219,12 +230,16 @@ export default function CreateInvoicePage() {
       const newItems = [...invoiceItems];
       const unitPrice = Number(product.price);
       const subtotal = newItems[itemIndex].quantity * unitPrice;
+      const discountAmount = newItems[itemIndex].discountType === 'percentage'
+        ? (subtotal * newItems[itemIndex].discount) / 100
+        : Math.min(newItems[itemIndex].discount, subtotal);
       newItems[itemIndex] = {
         ...newItems[itemIndex],
         productId: product.id,
         productName: product.name,
         unitPrice,
-        total: subtotal,
+        discountAmount,
+        total: subtotal - discountAmount,
         isManual: false
       };
       setInvoiceItems(newItems);
@@ -233,7 +248,7 @@ export default function CreateInvoicePage() {
     }
   };
 
-  const updateItem = (itemId: string, field: 'quantity' | 'unitPrice', value: number | string) => {
+  const updateItem = (itemId: string, field: 'quantity' | 'unitPrice' | 'discount' | 'discountType', value: number | string) => {
     const itemIndex = invoiceItems.findIndex(item => item.id === itemId);
     if (itemIndex !== -1) {
       const newItems = [...invoiceItems];
@@ -243,11 +258,19 @@ export default function CreateInvoicePage() {
         item.quantity = Math.max(1, Number(value));
       } else if (field === 'unitPrice') {
         item.unitPrice = Math.max(0, Number(value));
+      } else if (field === 'discount') {
+        item.discount = Math.max(0, Number(value));
+      } else if (field === 'discountType') {
+        item.discountType = value as 'percentage' | 'fixed';
       }
 
       // Recalculate totals
       const subtotal = item.quantity * item.unitPrice;
-      item.total = subtotal;
+      const discountAmount = item.discountType === 'percentage'
+        ? (subtotal * item.discount) / 100
+        : Math.min(item.discount, subtotal);
+      item.discountAmount = discountAmount;
+      item.total = subtotal - discountAmount;
 
       setInvoiceItems(newItems);
     }
@@ -257,8 +280,23 @@ export default function CreateInvoicePage() {
     return invoiceItems.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0);
   };
 
+  const calculateTotalDiscount = () => {
+    return invoiceItems.reduce((sum, item) => sum + item.discountAmount, 0);
+  };
+
+  const calculateDiscountAmount = () => {
+    const subtotal = calculateSubtotal() - calculateTotalDiscount();
+    if (discountType === 'percentage') {
+      return (subtotal * discount) / 100;
+    }
+    return Math.min(discount, subtotal);
+  };
+
   const calculateGrandTotal = () => {
-    return calculateSubtotal();
+    const subtotal = calculateSubtotal();
+    const itemDiscounts = calculateTotalDiscount();
+    const additionalDiscount = calculateDiscountAmount();
+    return Math.max(0, subtotal - itemDiscounts - additionalDiscount);
   };
 
   const calculateDueAmount = () => {
@@ -354,12 +392,21 @@ export default function CreateInvoicePage() {
             productName: item.productName,
             quantity: item.quantity,
             unitPrice: item.unitPrice,
+            discount: item.discount,
+            discountType: item.discountType,
+            discountAmount: item.discountAmount,
             isManual: item.isManual
           })),
+          discount,
+          discountType,
           patientId: selectedPatient.id,
           branch: branch,
           corporateId,
-          paidAmount: paidAmount
+          paidAmount: paidAmount,
+          subtotal: calculateSubtotal(),
+          itemDiscounts: calculateTotalDiscount(),
+          discountAmount: calculateDiscountAmount(),
+          grandTotal: calculateGrandTotal()
         }),
       });
 
@@ -576,7 +623,7 @@ export default function CreateInvoicePage() {
                         )}
                       </div>
 
-                      <div className='w-full col-span-8 grid sm:grid-cols-3 items-center gap-5'>
+                      <div className='w-full col-span-8 grid sm:grid-cols-5 items-center gap-5'>
 
                         <div>
                           <label className="block text-sm font-medium text-gray-700">
@@ -603,6 +650,35 @@ export default function CreateInvoicePage() {
                             onChange={(e) => updateItem(item.id, 'unitPrice', parseFloat(e.target.value) || 0)}
                             className="mt-1 block w-full rounded-md border-gray-300 py-2 px-3 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
                             disabled={(!item.isManual && item.productId) ? true : false}
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700">
+                            Discount Type
+                          </label>
+                          <select
+                            value={item.discountType}
+                            onChange={(e) => updateItem(item.id, 'discountType', e.target.value)}
+                            className="mt-1 block w-full rounded-md border-gray-300 py-2 px-3 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
+                          >
+                            <option value="percentage">%</option>
+                            <option value="fixed">৳</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700">
+                            Discount
+                          </label>
+                          <input
+                            type="number"
+                            step={item.discountType === 'percentage' ? '1' : '0.01'}
+                            min="0"
+                            max={item.discountType === 'percentage' ? '100' : undefined}
+                            value={item.discount}
+                            onChange={(e) => updateItem(item.id, 'discount', parseFloat(e.target.value) || 0)}
+                            className="mt-1 block w-full rounded-md border-gray-300 py-2 px-3 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
                           />
                         </div>
 
@@ -674,6 +750,52 @@ export default function CreateInvoicePage() {
                   </div>
                 </div>
 
+                {/* Additional Discount Section */}
+                <div className="mt-6 border-t pt-6">
+                  <h4 className="text-lg font-medium text-gray-900 mb-4">Additional Discount</h4>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">
+                        Discount Type
+                      </label>
+                      <select
+                        value={discountType}
+                        onChange={(e) => setDiscountType(e.target.value as 'percentage' | 'fixed')}
+                        className="mt-1 block w-full rounded-md border-gray-300 py-2 px-3 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
+                      >
+                        <option value="percentage">Percentage (%)</option>
+                        <option value="fixed">Fixed Amount (৳)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">
+                        Discount Value
+                      </label>
+                      <input
+                        type="number"
+                        step={discountType === 'percentage' ? '1' : '0.01'}
+                        min="0"
+                        max={discountType === 'percentage' ? '100' : undefined}
+                        value={discount}
+                        onChange={(e) => setDiscount(parseFloat(e.target.value) || 0)}
+                        className="mt-1 block w-full rounded-md border-gray-300 py-2 px-3 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
+                        placeholder={discountType === 'percentage' ? '10' : '50.00'}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">
+                        Discount Amount
+                      </label>
+                      <input
+                        type="text"
+                        value={`৳${calculateDiscountAmount().toFixed(2)}`}
+                        disabled
+                        className="mt-1 block w-full rounded-md border-gray-300 bg-gray-50 py-2 px-3 text-gray-500 sm:text-sm"
+                      />
+                    </div>
+                  </div>
+                </div>
+
                 {/* Branch Selection and corporate id */}
                 <div className='mt-6 border-t pt-6'>
                   <h4 className="text-lg font-medium text-gray-900 mb-4">{"Branch & Corporate ID"}</h4>
@@ -714,6 +836,18 @@ export default function CreateInvoicePage() {
                         <span className="text-gray-600">Subtotal:</span>
                         <span className="font-medium">৳{calculateSubtotal().toFixed(2)}</span>
                       </div>
+                      {calculateTotalDiscount() > 0 && (
+                        <div className="flex justify-between text-sm text-red-600">
+                          <span>Item Discounts:</span>
+                          <span>-৳{calculateTotalDiscount().toFixed(2)}</span>
+                        </div>
+                      )}
+                      {discount > 0 && (
+                        <div className="flex justify-between text-sm text-red-600">
+                          <span>Additional Discount ({discountType === 'percentage' ? `${discount}%` : '৳' + discount.toFixed(2)}):</span>
+                          <span>-৳{calculateDiscountAmount().toFixed(2)}</span>
+                        </div>
+                      )}
                       <div className="flex justify-between text-lg font-semibold border-t pt-2">
                         <span>Grand Total:</span>
                         <span>৳{calculateGrandTotal().toFixed(2)}</span>
