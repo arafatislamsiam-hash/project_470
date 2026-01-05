@@ -43,14 +43,6 @@ export default function Navigation() {
               >
                 Dashboard
               </Link>
-              {(permissions.CREATE_INVOICE || permissions.VIEW_ALL_INVOICES) && (
-                <Link
-                  href="/dashboard/performance"
-                  className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium"
-                >
-                  Forecast &amp; Goals
-                </Link>
-              )}
 
               {permissions.CREATE_INVOICE && (
                 <Link
@@ -162,14 +154,6 @@ export default function Navigation() {
           >
             Dashboard
           </Link>
-          {(permissions.CREATE_INVOICE || permissions.VIEW_ALL_INVOICES) && (
-            <Link
-              href="/dashboard/performance"
-              className="text-gray-600 hover:text-gray-900 block px-3 py-2 rounded-md text-base font-medium"
-            >
-              Forecast &amp; Goals
-            </Link>
-          )}
 
           {permissions.CREATE_INVOICE && (
             <Link
