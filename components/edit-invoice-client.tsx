@@ -468,8 +468,8 @@ export default function EditInvoiceClient({ invoice }: EditInvoiceClientProps) {
       });
 
       if (response.ok) {
-        await response.json();
-        router.push('/dashboard');
+        const data = await response.json();
+        router.push(`/invoices/${data.invoice.id}`);
       } else {
         const errorData = await response.json();
         setError(errorData.error || 'Failed to update invoice');

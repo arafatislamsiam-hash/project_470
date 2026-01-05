@@ -41,7 +41,7 @@ export default function CreateInvoicePage() {
   const [patientSelectionMode, setPatientSelectionMode] = useState<'none' | 'new' | 'existing'>('none');
   const [showNewPatientModal, setShowNewPatientModal] = useState(false);
   const [mobileSearch, setMobileSearch] = useState('');
-  const [searchResults, setSearchResults] = useState<Patient[]>([]);
+  const [foundPatient, setFoundPatient] = useState<Patient | null>(null);
   const [newPatientForm, setNewPatientForm] = useState({ patientName: '', patientMobile: '' });
   const [products, setProducts] = useState<Product[]>([]);
   const [invoiceItems, setInvoiceItems] = useState<InvoiceItem[]>([
@@ -61,7 +61,6 @@ export default function CreateInvoicePage() {
   const [discount, setDiscount] = useState<number>(0);
   const [discountType, setDiscountType] = useState<'percentage' | 'fixed'>('percentage');
   const [branch, setBranch] = useState<string>('');
-  const [corporateId, setCorporateId] = useState<string>('');
   const [paidAmount, setPaidAmount] = useState<number>(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -73,21 +72,21 @@ export default function CreateInvoicePage() {
   // Debounced search for patient by mobile
   const debouncedSearchPatient = useCallback(
     async (mobile: string) => {
-      if (mobile.length > 5) {
+      if (mobile.length > 3) {
         try {
-          const response = await fetch(`/api/patient?search=${encodeURIComponent(mobile)}`);
+          const response = await fetch(`/api/patient?mobile=${encodeURIComponent(mobile)}`);
           if (response.ok) {
             const data = await response.json();
-            setSearchResults(data.patients);
+            setFoundPatient(data.patient);
           } else {
-            setSearchResults([]);
+            setFoundPatient(null);
           }
         } catch (error) {
           console.error('Error searching patient:', error);
-          setSearchResults([]);
+          setFoundPatient(null);
         }
       } else {
-        setSearchResults([]);
+        setFoundPatient(null);
       }
     },
     []
@@ -340,12 +339,12 @@ export default function CreateInvoicePage() {
     }
   };
 
-  const handleSelectExistingPatient = (foundPatient: Patient) => {
-    if (searchResults.length > 0) {
+  const handleSelectExistingPatient = () => {
+    if (foundPatient) {
       setSelectedPatient(foundPatient);
       setPatientSelectionMode('existing');
       setMobileSearch('');
-      setSearchResults([]);
+      setFoundPatient(null);
     }
   };
 
@@ -353,7 +352,7 @@ export default function CreateInvoicePage() {
     setSelectedPatient(null);
     setPatientSelectionMode('none');
     setMobileSearch('');
-    setSearchResults([]);
+    setFoundPatient(null);
     setShowNewPatientModal(false);
     setNewPatientForm({ patientName: '', patientMobile: '' });
   };
@@ -401,7 +400,6 @@ export default function CreateInvoicePage() {
           discountType,
           patientId: selectedPatient.id,
           branch: branch,
-          corporateId,
           paidAmount: paidAmount,
           subtotal: calculateSubtotal(),
           itemDiscounts: calculateTotalDiscount(),
@@ -499,23 +497,23 @@ export default function CreateInvoicePage() {
                           className="block w-full rounded-md border-gray-300 py-2 px-3 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
                         />
                       </div>
-                      {searchResults && searchResults.map((f) => (
-                        <div className="p-3 border border-green-200 rounded-md bg-green-50" key={f.id}>
+                      {foundPatient && (
+                        <div className="p-3 border border-green-200 rounded-md bg-green-50">
                           <div className="flex justify-between items-center">
                             <div>
-                              <p className="font-medium text-green-900">{f.patientName}</p>
-                              <p className="text-sm text-green-700">{f.patientMobile}</p>
+                              <p className="font-medium text-green-900">{foundPatient.patientName}</p>
+                              <p className="text-sm text-green-700">{foundPatient.patientMobile}</p>
                             </div>
                             <button
                               type="button"
-                              onClick={() => handleSelectExistingPatient(f)}
+                              onClick={handleSelectExistingPatient}
                               className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700"
                             >
                               Select
                             </button>
                           </div>
                         </div>
-                      ))}
+                      )}
                       <button
                         type="button"
                         onClick={resetPatientSelection}
@@ -623,78 +621,74 @@ export default function CreateInvoicePage() {
                         )}
                       </div>
 
-                      <div className='w-full col-span-8 grid sm:grid-cols-5 items-center gap-5'>
-
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700">
-                            Quantity
-                          </label>
-                          <input
-                            type="number"
-                            min="1"
-                            value={item.quantity}
-                            onChange={(e) => updateItem(item.id, 'quantity', parseInt(e.target.value) || 1)}
-                            className="mt-1 block w-full rounded-md border-gray-300 py-2 px-3 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700">
-                            Unit Price (৳)
-                          </label>
-                          <input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            value={item.unitPrice}
-                            onChange={(e) => updateItem(item.id, 'unitPrice', parseFloat(e.target.value) || 0)}
-                            className="mt-1 block w-full rounded-md border-gray-300 py-2 px-3 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
-                            disabled={(!item.isManual && item.productId) ? true : false}
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700">
-                            Discount Type
-                          </label>
-                          <select
-                            value={item.discountType}
-                            onChange={(e) => updateItem(item.id, 'discountType', e.target.value)}
-                            className="mt-1 block w-full rounded-md border-gray-300 py-2 px-3 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
-                          >
-                            <option value="percentage">%</option>
-                            <option value="fixed">৳</option>
-                          </select>
-                        </div>
-
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700">
-                            Discount
-                          </label>
-                          <input
-                            type="number"
-                            step={item.discountType === 'percentage' ? '1' : '0.01'}
-                            min="0"
-                            max={item.discountType === 'percentage' ? '100' : undefined}
-                            value={item.discount}
-                            onChange={(e) => updateItem(item.id, 'discount', parseFloat(e.target.value) || 0)}
-                            className="mt-1 block w-full rounded-md border-gray-300 py-2 px-3 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700">
-                            Total
-                          </label>
-                          <input
-                            type="text"
-                            value={`৳${item.total.toFixed(2)}`}
-                            disabled
-                            className="mt-1 block w-full rounded-md border-gray-300 bg-gray-50 py-2 px-3 text-gray-500 sm:text-sm"
-                          />
-                        </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">
+                          Quantity
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          value={item.quantity}
+                          onChange={(e) => updateItem(item.id, 'quantity', parseInt(e.target.value) || 1)}
+                          className="mt-1 block w-full rounded-md border-gray-300 py-2 px-3 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
+                        />
                       </div>
 
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">
+                          Unit Price (৳)
+                        </label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={item.unitPrice}
+                          onChange={(e) => updateItem(item.id, 'unitPrice', parseFloat(e.target.value) || 0)}
+                          className="mt-1 block w-full rounded-md border-gray-300 py-2 px-3 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
+                          disabled={(!item.isManual && item.productId) ? true : false}
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">
+                          Discount Type
+                        </label>
+                        <select
+                          value={item.discountType}
+                          onChange={(e) => updateItem(item.id, 'discountType', e.target.value)}
+                          className="mt-1 block w-full rounded-md border-gray-300 py-2 px-3 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
+                        >
+                          <option value="percentage">%</option>
+                          <option value="fixed">৳</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">
+                          Discount
+                        </label>
+                        <input
+                          type="number"
+                          step={item.discountType === 'percentage' ? '1' : '0.01'}
+                          min="0"
+                          max={item.discountType === 'percentage' ? '100' : undefined}
+                          value={item.discount}
+                          onChange={(e) => updateItem(item.id, 'discount', parseFloat(e.target.value) || 0)}
+                          className="mt-1 block w-full rounded-md border-gray-300 py-2 px-3 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">
+                          Total
+                        </label>
+                        <input
+                          type="text"
+                          value={`৳${item.total.toFixed(2)}`}
+                          disabled
+                          className="mt-1 block w-full rounded-md border-gray-300 bg-gray-50 py-2 px-3 text-gray-500 sm:text-sm"
+                        />
+                      </div>
 
                       <div className="flex items-end">
                         {invoiceItems.length > 1 && (
@@ -796,9 +790,9 @@ export default function CreateInvoicePage() {
                   </div>
                 </div>
 
-                {/* Branch Selection and corporate id */}
+                {/* Branch Selection */}
                 <div className='mt-6 border-t pt-6'>
-                  <h4 className="text-lg font-medium text-gray-900 mb-4">{"Branch & Corporate ID"}</h4>
+                  <h4 className="text-lg font-medium text-gray-900 mb-4">Branch</h4>
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                     <div>
                       <label className="block text-sm font-medium text-gray-700">
@@ -812,18 +806,6 @@ export default function CreateInvoicePage() {
                         <option value="Hathazari Branch">Hathazari Branch</option>
                         <option value="Kazir Dewri Branch">Kazir Dewri Branch</option>
                       </select>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700">
-                        Corporate ID
-                      </label>
-                      <input
-                        type="text"
-                        value={corporateId}
-                        placeholder='Enter Corporate ID'
-                        onChange={(e) => setCorporateId(e.target.value)}
-                        className="mt-1 block w-full rounded-md border-gray-300 py-2 px-3 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
-                      />
                     </div>
                   </div>
                 </div>

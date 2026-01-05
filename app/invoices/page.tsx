@@ -2,6 +2,7 @@
 
 import Navigation from '@/components/navigation';
 import { useSession } from 'next-auth/react';
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
 interface InvoiceItem {
@@ -276,38 +277,40 @@ export default function Invoices() {
                 <>
                   <ul className="divide-y divide-gray-200">
                     {paginatedInvoices.map((invoice) => (
-                      <li key={invoice.id} className="px-4 py-4 sm:px-6 hover:bg-gray-50 transition-colors duration-200">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center">
-                            <div className="flex-shrink-0">
-                              <div className="w-10 h-10 bg-gray-300 rounded-full flex items-center justify-center">
-                                <span className="text-gray-600 font-bold">
-                                  {invoice.invoiceNo.slice(-2)}
-                                </span>
+                      <Link key={invoice.id} href={`/invoices/${invoice.id}`}>
+                        <li className="px-4 py-4 sm:px-6 hover:bg-gray-50 transition-colors duration-200">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center">
+                              <div className="flex-shrink-0">
+                                <div className="w-10 h-10 bg-gray-300 rounded-full flex items-center justify-center">
+                                  <span className="text-gray-600 font-bold">
+                                    {invoice.invoiceNo.slice(-2)}
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="ml-4">
+                                <div className="text-sm font-medium text-gray-900">
+                                  Invoice #{invoice.invoiceNo}
+                                </div>
+                                <div className="text-sm text-gray-500">
+                                  {invoice.patient.patientName} ({invoice.patient.patientMobile})
+                                </div>
+                                <div className="text-sm text-gray-500">
+                                  Created by {invoice.user.name} • {invoice.items.length} items
+                                </div>
                               </div>
                             </div>
-                            <div className="ml-4">
+                            <div className="text-right">
                               <div className="text-sm font-medium text-gray-900">
-                                Invoice #{invoice.invoiceNo}
+                                ৳{Number(invoice.totalAmount).toFixed(2)}
                               </div>
                               <div className="text-sm text-gray-500">
-                                {invoice.patient.patientName} ({invoice.patient.patientMobile})
-                              </div>
-                              <div className="text-sm text-gray-500">
-                                Created by {invoice.user.name} • {invoice.items.length} items
+                                {new Date(invoice.createdAt).toLocaleDateString()}
                               </div>
                             </div>
                           </div>
-                          <div className="text-right">
-                            <div className="text-sm font-medium text-gray-900">
-                              ৳{Number(invoice.totalAmount).toFixed(2)}
-                            </div>
-                            <div className="text-sm text-gray-500">
-                              {new Date(invoice.createdAt).toLocaleDateString()}
-                            </div>
-                          </div>
-                        </div>
-                      </li>
+                        </li>
+                      </Link>
                     ))}
                   </ul>
                   {renderPagination()}
