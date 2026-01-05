@@ -10,6 +10,8 @@ interface Product {
   name: string;
   price: number | string;
   description: string | null;
+  stockQuantity: number;
+  lowStockThreshold: number;
   category: {
     id: string;
     title: string;
@@ -38,7 +40,9 @@ function ProductsContent() {
     name: '',
     price: '',
     description: '',
-    categoryId: ''
+    categoryId: '',
+    stockQuantity: '',
+    lowStockThreshold: ''
   });
 
   useEffect(() => {
@@ -108,6 +112,7 @@ function ProductsContent() {
     const matchesCategory = !selectedCategory || product.category.id === selectedCategory;
     return matchesSearch && matchesCategory;
   });
+  const lowStockCount = products.filter(product => product.lowStockThreshold > 0 && product.stockQuantity <= product.lowStockThreshold).length;
 
   const handleEditProduct = (product: Product) => {
     setEditingProduct(product);
@@ -115,7 +120,9 @@ function ProductsContent() {
       name: product.name,
       price: product.price.toString(),
       description: product.description || '',
-      categoryId: product.category.id
+      categoryId: product.category.id,
+      stockQuantity: product.stockQuantity?.toString() || '0',
+      lowStockThreshold: product.lowStockThreshold?.toString() || '0'
     });
     setShowModal(true);
   };
@@ -151,6 +158,14 @@ function ProductsContent() {
       return;
     }
 
+    const stockValue = Number(formData.stockQuantity || 0);
+    const thresholdValue = Number(formData.lowStockThreshold || 0);
+
+    if (stockValue < 0 || thresholdValue < 0 || Number.isNaN(stockValue) || Number.isNaN(thresholdValue)) {
+      setError('Stock quantity and threshold must be valid non-negative numbers');
+      return;
+    }
+
     try {
       const url = editingProduct ? `/api/products/${editingProduct.id}` : '/api/products';
       const method = editingProduct ? 'PUT' : 'POST';
@@ -160,14 +175,18 @@ function ProductsContent() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(formData),
+        body: JSON.stringify({
+          ...formData,
+          stockQuantity: stockValue,
+          lowStockThreshold: thresholdValue
+        }),
       });
 
       if (response.ok) {
         await fetchData();
         setShowModal(false);
         setEditingProduct(null);
-        setFormData({ name: '', price: '', description: '', categoryId: '' });
+        setFormData({ name: '', price: '', description: '', categoryId: '', stockQuantity: '', lowStockThreshold: '' });
       } else {
         const errorData = await response.json();
         setError(errorData.error || `Failed to ${editingProduct ? 'update' : 'create'} product`);
@@ -269,54 +288,79 @@ function ProductsContent() {
                   )}
                 </div>
               )}
+              {lowStockCount > 0 && (
+                <div className="mt-2 text-sm text-orange-600 font-medium">
+                  {lowStockCount} product{lowStockCount > 1 ? 's are' : ' is'} at or below the low-stock threshold.
+                </div>
+              )}
             </div>
             {filteredProducts.length > 0 ? (
               <ul className="divide-y divide-gray-200">
-                {filteredProducts.map((product) => (
-                  <li key={product.id}>
-                    <div className="px-4 py-4 flex items-center justify-between">
-                      <div className="flex items-center">
-                        <div className="flex-shrink-0">
-                          <div className="w-10 h-10 bg-blue-500 rounded-lg flex items-center justify-center">
-                            <span className="text-white font-bold">
-                              {product.name.charAt(0).toUpperCase()}
-                            </span>
-                          </div>
-                        </div>
-                        <div className="ml-4">
-                          <div className="text-sm font-medium text-gray-900">
-                            {product.name}
-                          </div>
-                          <div className="text-sm text-gray-500">
-                            Category: {product.category.title} • ৳{Number(product.price).toFixed(2)}
-                          </div>
-                          {product.description && (
-                            <div className="text-sm text-gray-400">
-                              {product.description}
+                {filteredProducts.map((product) => {
+                  const lowStock = product.lowStockThreshold > 0 && product.stockQuantity <= product.lowStockThreshold;
+                  const outOfStock = product.stockQuantity <= 0;
+
+                  return (
+                    <li key={product.id}>
+                      <div className="px-4 py-4 flex items-center justify-between">
+                        <div className="flex items-center">
+                          <div className="flex-shrink-0">
+                            <div className="w-10 h-10 bg-blue-500 rounded-lg flex items-center justify-center">
+                              <span className="text-white font-bold">
+                                {product.name.charAt(0).toUpperCase()}
+                              </span>
                             </div>
-                          )}
+                          </div>
+                          <div className="ml-4">
+                            <div className="flex items-center gap-2">
+                              <div className="text-sm font-medium text-gray-900">
+                                {product.name}
+                              </div>
+                              {lowStock && (
+                                <span className="inline-flex items-center rounded-full bg-orange-100 px-2 py-0.5 text-[11px] font-medium text-orange-800">
+                                  Low stock
+                                </span>
+                              )}
+                              {outOfStock && (
+                                <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-700">
+                                  Out of stock
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-sm text-gray-500">
+                              Category: {product.category.title} • ৳{Number(product.price).toFixed(2)}
+                            </div>
+                            <div className="text-sm text-gray-600">
+                              Stock: {product.stockQuantity} units • Threshold: {product.lowStockThreshold}
+                            </div>
+                            {product.description && (
+                              <div className="text-sm text-gray-400">
+                                {product.description}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-800">
+                            ৳{Number(product.price).toFixed(2)}
+                          </span>
+                          <button
+                            onClick={() => handleEditProduct(product)}
+                            className="text-blue-600 hover:text-blue-900 text-sm font-medium"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => handleDeleteProduct(product.id)}
+                            className="text-red-600 hover:text-red-900 text-sm font-medium"
+                          >
+                            Delete
+                          </button>
                         </div>
                       </div>
-                      <div className="flex items-center space-x-2">
-                        <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-800">
-                          ৳{Number(product.price).toFixed(2)}
-                        </span>
-                        <button
-                          onClick={() => handleEditProduct(product)}
-                          className="text-blue-600 hover:text-blue-900 text-sm font-medium"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => handleDeleteProduct(product.id)}
-                          className="text-red-600 hover:text-red-900 text-sm font-medium"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </div>
-                  </li>
-                ))}
+                    </li>
+                  );
+                })}
               </ul>
             ) : (
               <div className="text-center py-12">
@@ -391,6 +435,35 @@ function ProductsContent() {
                     placeholder="0.00"
                   />
                 </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">
+                    Stock Quantity
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={formData.stockQuantity}
+                    onChange={(e) => setFormData({ ...formData, stockQuantity: e.target.value })}
+                    className="mt-1 block w-full rounded-md border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm border"
+                    placeholder="e.g., 50"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">
+                    Low Stock Threshold
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={formData.lowStockThreshold}
+                    onChange={(e) => setFormData({ ...formData, lowStockThreshold: e.target.value })}
+                    className="mt-1 block w-full rounded-md border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm border"
+                    placeholder="Alert when stock <= threshold"
+                  />
+                  <p className="mt-1 text-xs text-gray-500">
+                    Staff will be alerted when quantity falls below this value.
+                  </p>
+                </div>
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700">
@@ -430,7 +503,7 @@ function ProductsContent() {
                       setShowModal(false);
                       setEditingProduct(null);
                       setError('');
-                      setFormData({ name: '', price: '', description: '', categoryId: '' });
+                      setFormData({ name: '', price: '', description: '', categoryId: '', stockQuantity: '', lowStockThreshold: '' });
                     }}
                     className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
                   >

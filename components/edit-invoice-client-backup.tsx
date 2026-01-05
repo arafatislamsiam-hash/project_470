@@ -9,6 +9,8 @@ interface Product {
   id: string;
   name: string;
   price: number | string;
+  stockQuantity: number;
+  lowStockThreshold: number;
   category: {
     id: string;
     title: string;

@@ -8,6 +8,8 @@ interface Product {
   id: string;
   name: string;
   price: number | string;
+  stockQuantity: number;
+  lowStockThreshold: number;
   category: {
     id: string;
     title: string;
@@ -100,6 +102,27 @@ export default function EditInvoiceClient({ invoice }: EditInvoiceClientProps) {
   const [filteredProducts, setFilteredProducts] = useState<{ [key: string]: Product[] }>({});
   const [showDropdowns, setShowDropdowns] = useState<{ [key: string]: boolean }>({});
   const searchRefs = useRef<{ [key: string]: HTMLInputElement | null }>({});
+  const getProductById = useCallback((productId: string) => products.find(product => product.id === productId), [products]);
+  const getAllocatedQuantity = useCallback((productId: string, excludeItemId?: string) => {
+    return invoiceItems.reduce((total, item) => {
+      if (item.productId === productId && item.id !== excludeItemId) {
+        return total + item.quantity;
+      }
+      return total;
+    }, 0);
+  }, [invoiceItems]);
+  const getRemainingStock = useCallback((productId: string, currentItemId: string) => {
+    const product = getProductById(productId);
+    if (!product) {
+      return 0;
+    }
+    const allocatedElsewhere = getAllocatedQuantity(productId, currentItemId);
+    return Math.max(0, product.stockQuantity - allocatedElsewhere);
+  }, [getAllocatedQuantity, getProductById]);
+  const isProductLowStock = useCallback((product: Product) => (
+    product.lowStockThreshold > 0 && product.stockQuantity <= product.lowStockThreshold
+  ), []);
+  const isProductOutOfStock = useCallback((product: Product) => product.stockQuantity <= 0, []);
 
   // Debounced search for patient by mobile
   const debouncedSearchPatient = useCallback(
@@ -135,21 +158,7 @@ export default function EditInvoiceClient({ invoice }: EditInvoiceClientProps) {
     return () => clearTimeout(timeoutId);
   }, [mobileSearch, patientSelectionMode, debouncedSearchPatient]);
 
-  useEffect(() => {
-    if (status === 'loading') return;
-    if (!session) {
-      router.push('/login');
-      return;
-    }
-    if (!session.user.permissions.CREATE_INVOICE) {
-      router.push('/dashboard');
-      return;
-    }
-    fetchProducts();
-    initializeInvoiceItems();
-  }, [session, status, router, invoice]);
-
-  const initializeInvoiceItems = () => {
+  const initializeInvoiceItems = useCallback(() => {
     const initialItems: InvoiceItem[] = invoice.items.map((item, index) => ({
       id: item.id || (Date.now() + index).toString(),
       productId: item.productId || '',
@@ -171,7 +180,21 @@ export default function EditInvoiceClient({ invoice }: EditInvoiceClientProps) {
       initialSearchTerms[item.id] = item.productName;
     });
     setSearchTerms(initialSearchTerms);
-  };
+  }, [invoice]);
+
+  useEffect(() => {
+    if (status === 'loading') return;
+    if (!session) {
+      router.push('/login');
+      return;
+    }
+    if (!session.user.permissions.CREATE_INVOICE) {
+      router.push('/dashboard');
+      return;
+    }
+    fetchProducts();
+    initializeInvoiceItems();
+  }, [session, status, router, invoice, initializeInvoiceItems]);
 
   const fetchProducts = async () => {
     try {
@@ -283,9 +306,21 @@ export default function EditInvoiceClient({ invoice }: EditInvoiceClientProps) {
   const selectProduct = (itemId: string, product: Product) => {
     const itemIndex = invoiceItems.findIndex(item => item.id === itemId);
     if (itemIndex !== -1) {
+      if (isProductOutOfStock(product)) {
+        setError(`${product.name} is currently out of stock.`);
+        return;
+      }
+
+      const availableForItem = getRemainingStock(product.id, itemId);
+      if (availableForItem <= 0) {
+        setError(`No stock remaining for ${product.name}.`);
+        return;
+      }
+
       const newItems = [...invoiceItems];
       const unitPrice = Number(product.price);
-      const subtotal = newItems[itemIndex].quantity * unitPrice;
+      const constrainedQuantity = Math.max(1, Math.min(newItems[itemIndex].quantity, availableForItem));
+      const subtotal = constrainedQuantity * unitPrice;
       const discountAmount = newItems[itemIndex].discountType === 'percentage'
         ? (subtotal * newItems[itemIndex].discount) / 100
         : Math.min(newItems[itemIndex].discount, subtotal);
@@ -293,6 +328,7 @@ export default function EditInvoiceClient({ invoice }: EditInvoiceClientProps) {
         ...newItems[itemIndex],
         productId: product.id,
         productName: product.name,
+        quantity: constrainedQuantity,
         unitPrice,
         discountAmount,
         total: subtotal - discountAmount,
@@ -301,6 +337,7 @@ export default function EditInvoiceClient({ invoice }: EditInvoiceClientProps) {
       setInvoiceItems(newItems);
       setSearchTerms({ ...searchTerms, [itemId]: product.name });
       setShowDropdowns({ ...showDropdowns, [itemId]: false });
+      setError('');
     }
   };
 
@@ -311,7 +348,27 @@ export default function EditInvoiceClient({ invoice }: EditInvoiceClientProps) {
       const item = newItems[itemIndex];
 
       if (field === 'quantity') {
-        item.quantity = Math.max(1, Number(value));
+        let requestedQuantity = Number(value);
+        if (!Number.isFinite(requestedQuantity) || requestedQuantity < 1) {
+          requestedQuantity = 1;
+        }
+
+        if (item.productId) {
+          const maxAllowed = getRemainingStock(item.productId, item.id);
+          if (maxAllowed <= 0) {
+            requestedQuantity = 0;
+            setError(`No stock remaining for ${item.productName}. Please adjust quantities or remove this item.`);
+          } else if (requestedQuantity > maxAllowed) {
+            requestedQuantity = maxAllowed;
+            setError(`Only ${maxAllowed} units of ${item.productName} are available.`);
+          }
+        }
+
+        if (!item.productId && requestedQuantity < 1) {
+          requestedQuantity = 1;
+        }
+
+        item.quantity = requestedQuantity;
       } else if (field === 'unitPrice') {
         item.unitPrice = Math.max(0, Number(value));
       } else if (field === 'discount') {
@@ -598,176 +655,234 @@ export default function EditInvoiceClient({ invoice }: EditInvoiceClientProps) {
           </div>
 
           <div className="space-y-4">
-            {invoiceItems.map((item) => (
-              <div key={item.id} className="grid grid-cols-1 gap-4 sm:grid-cols-12 p-4 border border-gray-200 rounded-lg relative">
-                <div className="sm:col-span-4 relative">
-                  <label className="block text-sm font-medium text-gray-700">
-                    Product Name
-                  </label>
-                  <input
-                    ref={el => { searchRefs.current[item.id] = el; }}
-                    type="text"
-                    value={searchTerms[item.id] || item.productName}
-                    onChange={(e) => handleProductSearch(item.id, e.target.value)}
-                    className="mt-1 block w-full rounded-md border-gray-300 py-2 px-3 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
-                    placeholder="Search products or enter manually..."
-                  />
+            {invoiceItems.map((item) => {
+              const selectedProduct = item.productId ? getProductById(item.productId) : null;
+              const allocatedElsewhere = item.productId ? getAllocatedQuantity(item.productId, item.id) : 0;
+              const maxForThisLine = item.productId ? getRemainingStock(item.productId, item.id) : 0;
+              const remainingAfterCurrent = selectedProduct
+                ? Math.max(0, selectedProduct.stockQuantity - (allocatedElsewhere + item.quantity))
+                : 0;
+              const showLowStockBanner = selectedProduct ? isProductLowStock(selectedProduct) : false;
 
-                  {/* Dropdown for search results */}
-                  {showDropdowns[item.id] && (
-                    <div className="absolute z-10 mt-1 w-full bg-white shadow-lg max-h-60 rounded-md py-1 text-base ring-1 ring-black ring-opacity-5 overflow-auto">
-                      {filteredProducts[item.id]?.length > 0 ? (
-                        filteredProducts[item.id].map((product) => (
+              return (
+                <div key={item.id} className="grid grid-cols-1 gap-4 sm:grid-cols-12 p-4 border border-gray-200 rounded-lg relative">
+                  <div className="sm:col-span-4 relative">
+                    <label className="block text-sm font-medium text-gray-700">
+                      Product Name
+                    </label>
+                    <input
+                      ref={el => { searchRefs.current[item.id] = el; }}
+                      type="text"
+                      value={searchTerms[item.id] || item.productName}
+                      onChange={(e) => handleProductSearch(item.id, e.target.value)}
+                      className="mt-1 block w-full rounded-md border-gray-300 py-2 px-3 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
+                      placeholder="Search products or enter manually..."
+                    />
+
+                    {/* Dropdown for search results */}
+                    {showDropdowns[item.id] && (
+                      <div className="absolute z-10 mt-1 w-full bg-white shadow-lg max-h-60 rounded-md py-1 text-base ring-1 ring-black ring-opacity-5 overflow-auto">
+                        {filteredProducts[item.id]?.length > 0 ? (
+                          filteredProducts[item.id].map((product) => {
+                            const remainingForRow = getRemainingStock(product.id, item.id);
+                            const lowStock = isProductLowStock(product);
+                            const outOfStock = isProductOutOfStock(product) || remainingForRow <= 0;
+
+                            return (
+                              <div
+                                key={product.id}
+                                className={`select-none relative py-2 pl-3 pr-9 ${outOfStock ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer hover:bg-blue-50'
+                                  }`}
+                                onMouseDown={(e) => {
+                                  if (outOfStock) {
+                                    e.preventDefault();
+                                    setError(`${product.name} has no available stock.`);
+                                    return;
+                                  }
+                                  e.preventDefault();
+                                  selectProduct(item.id, product);
+                                }}
+                              >
+                                <div className="flex items-center justify-between">
+                                  <span className="font-medium text-gray-900">
+                                    {product.name}
+                                  </span>
+                                  <span className="text-sm text-gray-500">
+                                    ৳{Number(product.price).toFixed(2)}
+                                  </span>
+                                </div>
+                                <div className="flex items-center justify-between text-xs mt-1">
+                                  <span className="text-gray-500">
+                                    {product.category.title}
+                                  </span>
+                                  <span className={`font-semibold ${lowStock ? 'text-orange-600' : 'text-gray-500'}`}>
+                                    In Stock: {product.stockQuantity}
+                                  </span>
+                                </div>
+                                <div className="text-xs text-gray-500">
+                                  Available for this invoice: {remainingForRow}
+                                  {outOfStock && (
+                                    <span className="ml-1 text-red-600 font-semibold">
+                                      (Unavailable)
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })
+                        ) : searchTerms[item.id]?.trim() && (
                           <div
-                            key={product.id}
-                            className="cursor-pointer select-none relative py-2 pl-3 pr-9 hover:bg-blue-50"
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              selectProduct(item.id, product);
+                            className="cursor-pointer select-none relative py-2 pl-3 pr-9 hover:bg-yellow-50 border-t border-gray-100"
+                            onClick={() => {
+                              const itemIndex = invoiceItems.findIndex(invoiceItem => invoiceItem.id === item.id);
+                              if (itemIndex !== -1) {
+                                const newItems = [...invoiceItems];
+                                newItems[itemIndex] = {
+                                  ...newItems[itemIndex],
+                                  isManual: true,
+                                  productId: '',
+                                  productName: searchTerms[item.id].trim(),
+                                  unitPrice: 0
+                                };
+                                setInvoiceItems(newItems);
+                                setShowDropdowns({ ...showDropdowns, [item.id]: false });
+                              }
                             }}
                           >
                             <div className="flex items-center justify-between">
                               <span className="font-medium text-gray-900">
-                                {product.name}
+                                Add `{searchTerms[item.id].trim()}` manually
                               </span>
-                              <span className="text-sm text-gray-500">
-                                ৳{Number(product.price).toFixed(2)}
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800">
+                                Manual
                               </span>
                             </div>
                             <span className="text-xs text-gray-400">
-                              {product.category.title}
+                              Click to add as custom product
                             </span>
                           </div>
-                        ))
-                      ) : searchTerms[item.id]?.trim() && (
-                        <div
-                          className="cursor-pointer select-none relative py-2 pl-3 pr-9 hover:bg-yellow-50 border-t border-gray-100"
-                          onClick={() => {
-                            const itemIndex = invoiceItems.findIndex(invoiceItem => invoiceItem.id === item.id);
-                            if (itemIndex !== -1) {
-                              const newItems = [...invoiceItems];
-                              newItems[itemIndex] = {
-                                ...newItems[itemIndex],
-                                isManual: true,
-                                productId: '',
-                                productName: searchTerms[item.id].trim(),
-                                unitPrice: 0
-                              };
-                              setInvoiceItems(newItems);
-                              setShowDropdowns({ ...showDropdowns, [item.id]: false });
-                            }
-                          }}
-                        >
-                          <div className="flex items-center justify-between">
-                            <span className="font-medium text-gray-900">
-                              Add `{searchTerms[item.id].trim()}` manually
-                            </span>
-                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800">
-                              Manual
-                            </span>
-                          </div>
-                          <span className="text-xs text-gray-400">
-                            Click to add as custom product
-                          </span>
-                        </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className='w-full col-span-8 grid sm:grid-cols-5 items-center gap-5'>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">
+                        Quantity
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={item.quantity}
+                        onChange={(e) => updateItem(item.id, 'quantity', parseInt(e.target.value) || 1)}
+                        className="mt-1 block w-full rounded-md border-gray-300 py-2 px-3 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">
+                        Unit Price (৳)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={item.unitPrice}
+                        onChange={(e) => updateItem(item.id, 'unitPrice', parseFloat(e.target.value) || 0)}
+                        className="mt-1 block w-full rounded-md border-gray-300 py-2 px-3 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
+                        disabled={(!item.isManual && item.productId) ? true : false}
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">
+                        Discount Type
+                      </label>
+                      <select
+                        value={item.discountType}
+                        onChange={(e) => updateItem(item.id, 'discountType', e.target.value)}
+                        className="mt-1 block w-full rounded-md border-gray-300 py-2 px-3 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
+                      >
+                        <option value="percentage">%</option>
+                        <option value="fixed">৳</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">
+                        Discount
+                      </label>
+                      <input
+                        type="number"
+                        step={item.discountType === 'percentage' ? '1' : '0.01'}
+                        min="0"
+                        max={item.discountType === 'percentage' ? '100' : undefined}
+                        value={item.discount}
+                        onChange={(e) => updateItem(item.id, 'discount', parseFloat(e.target.value) || 0)}
+                        className="mt-1 block w-full rounded-md border-gray-300 py-2 px-3 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">
+                        Total
+                      </label>
+                      <input
+                        type="text"
+                        value={`৳${item.total.toFixed(2)}`}
+                        disabled
+                        className="mt-1 block w-full rounded-md border-gray-300 bg-gray-50 py-2 px-3 text-gray-500 sm:text-sm"
+                      />
+                    </div>
+                  </div>
+
+
+                  <div className="flex items-end">
+                    {invoiceItems.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => removeRow(item.id)}
+                        className="rounded-md bg-red-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-500"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+
+                  {item.isManual && (
+                    <div className="sm:col-span-12">
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+                        Manual Entry
+                      </span>
+                    </div>
+                  )}
+                  {selectedProduct && (
+                    <div className="sm:col-span-12 text-xs text-gray-600 space-y-1">
+                      <div className="flex flex-wrap gap-4">
+                        <span>Stock on hand: {selectedProduct.stockQuantity}</span>
+                        <span>Max allocatable for this line: {maxForThisLine}</span>
+                        <span>Remaining after this line: {remainingAfterCurrent}</span>
+                        {selectedProduct.lowStockThreshold > 0 && (
+                          <span>Threshold: {selectedProduct.lowStockThreshold}</span>
+                        )}
+                      </div>
+                      {showLowStockBanner && (
+                        <p className="text-orange-600 font-medium">
+                          Low stock warning — consider replenishing soon.
+                        </p>
+                      )}
+                      {item.quantity === 0 && (
+                        <p className="text-red-600 font-medium">
+                          No stock available. Remove this item or adjust other quantities.
+                        </p>
                       )}
                     </div>
                   )}
                 </div>
-
-                <div className='w-full col-span-8 grid sm:grid-cols-5 items-center gap-5'>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">
-                      Quantity
-                    </label>
-                    <input
-                      type="number"
-                      min="1"
-                      value={item.quantity}
-                      onChange={(e) => updateItem(item.id, 'quantity', parseInt(e.target.value) || 1)}
-                      className="mt-1 block w-full rounded-md border-gray-300 py-2 px-3 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">
-                      Unit Price (৳)
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={item.unitPrice}
-                      onChange={(e) => updateItem(item.id, 'unitPrice', parseFloat(e.target.value) || 0)}
-                      className="mt-1 block w-full rounded-md border-gray-300 py-2 px-3 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
-                      disabled={(!item.isManual && item.productId) ? true : false}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">
-                      Discount Type
-                    </label>
-                    <select
-                      value={item.discountType}
-                      onChange={(e) => updateItem(item.id, 'discountType', e.target.value)}
-                      className="mt-1 block w-full rounded-md border-gray-300 py-2 px-3 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
-                    >
-                      <option value="percentage">%</option>
-                      <option value="fixed">৳</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">
-                      Discount
-                    </label>
-                    <input
-                      type="number"
-                      step={item.discountType === 'percentage' ? '1' : '0.01'}
-                      min="0"
-                      max={item.discountType === 'percentage' ? '100' : undefined}
-                      value={item.discount}
-                      onChange={(e) => updateItem(item.id, 'discount', parseFloat(e.target.value) || 0)}
-                      className="mt-1 block w-full rounded-md border-gray-300 py-2 px-3 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">
-                      Total
-                    </label>
-                    <input
-                      type="text"
-                      value={`৳${item.total.toFixed(2)}`}
-                      disabled
-                      className="mt-1 block w-full rounded-md border-gray-300 bg-gray-50 py-2 px-3 text-gray-500 sm:text-sm"
-                    />
-                  </div>
-                </div>
-
-
-                <div className="flex items-end">
-                  {invoiceItems.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() => removeRow(item.id)}
-                      className="rounded-md bg-red-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-500"
-                    >
-                      Remove
-                    </button>
-                  )}
-                </div>
-
-                {item.isManual && (
-                  <div className="sm:col-span-12">
-                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
-                      Manual Entry
-                    </span>
-                  </div>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           <div className="mt-4">
@@ -932,75 +1047,77 @@ export default function EditInvoiceClient({ invoice }: EditInvoiceClientProps) {
             {loading ? 'Updating...' : 'Update Invoice'}
           </button>
         </div>
-      </form>
+      </form >
 
       {/* New Patient Modal */}
-      {showNewPatientModal && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-          <div className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
-            <div className="mt-3">
-              <h3 className="text-lg font-medium text-gray-900 mb-4">
-                Create New Patient
-              </h3>
+      {
+        showNewPatientModal && (
+          <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+            <div className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+              <div className="mt-3">
+                <h3 className="text-lg font-medium text-gray-900 mb-4">
+                  Create New Patient
+                </h3>
 
-              {error && (
-                <div className="mb-4 rounded-md bg-red-50 p-4">
-                  <div className="text-sm text-red-700">{error}</div>
-                </div>
-              )}
+                {error && (
+                  <div className="mb-4 rounded-md bg-red-50 p-4">
+                    <div className="text-sm text-red-700">{error}</div>
+                  </div>
+                )}
 
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">
-                    Patient Name
-                  </label>
-                  <input
-                    type="text"
-                    value={newPatientForm.patientName}
-                    onChange={(e) => setNewPatientForm({ ...newPatientForm, patientName: e.target.value })}
-                    className="mt-1 block w-full rounded-md border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm border"
-                    placeholder="Enter patient name"
-                  />
-                </div>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">
+                      Patient Name
+                    </label>
+                    <input
+                      type="text"
+                      value={newPatientForm.patientName}
+                      onChange={(e) => setNewPatientForm({ ...newPatientForm, patientName: e.target.value })}
+                      className="mt-1 block w-full rounded-md border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm border"
+                      placeholder="Enter patient name"
+                    />
+                  </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">
-                    Mobile Number
-                  </label>
-                  <input
-                    type="text"
-                    value={newPatientForm.patientMobile}
-                    onChange={(e) => setNewPatientForm({ ...newPatientForm, patientMobile: e.target.value })}
-                    className="mt-1 block w-full rounded-md border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm border"
-                    placeholder="Enter mobile number"
-                  />
-                </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">
+                      Mobile Number
+                    </label>
+                    <input
+                      type="text"
+                      value={newPatientForm.patientMobile}
+                      onChange={(e) => setNewPatientForm({ ...newPatientForm, patientMobile: e.target.value })}
+                      className="mt-1 block w-full rounded-md border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm border"
+                      placeholder="Enter mobile number"
+                    />
+                  </div>
 
-                <div className="flex justify-end space-x-3 pt-4">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowNewPatientModal(false);
-                      setNewPatientForm({ patientName: '', patientMobile: '' });
-                      setError('');
-                    }}
-                    className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleCreateNewPatient}
-                    className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700"
-                  >
-                    Create Patient
-                  </button>
+                  <div className="flex justify-end space-x-3 pt-4">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowNewPatientModal(false);
+                        setNewPatientForm({ patientName: '', patientMobile: '' });
+                        setError('');
+                      }}
+                      className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCreateNewPatient}
+                      className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700"
+                    >
+                      Create Patient
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
-    </div>
+        )
+      }
+    </div >
   );
 }

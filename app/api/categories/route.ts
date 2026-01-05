@@ -1,46 +1,94 @@
-import { getSessionWithPermissions } from '@/lib/session';
-import { createCategoryForUser, getCategories } from '@/server/services/categoryService';
-import { handleServiceErrorResponse } from '@/server/utils/handleServiceErrorResponse';
 import { NextRequest, NextResponse } from 'next/server';
+import { prisma } from '@/lib/db';
+import { getSessionWithPermissions } from '@/lib/session';
 
 export async function GET() {
-  const session = await getSessionWithPermissions();
-
-  if (!session) {
-    return NextResponse.json(
-      { error: 'Unauthorized' },
-      { status: 401 }
-    );
-  }
-
   try {
-    const result = await getCategories(session.user);
-    return NextResponse.json(result);
+    const session = await getSessionWithPermissions();
+    
+    if (!session) {
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      );
+    }
+
+    const categories = await prisma.category.findMany({
+      orderBy: [
+        { isDefault: 'desc' }, // Default category first
+        { title: 'asc' }
+      ],
+      include: {
+        _count: {
+          select: {
+            products: true
+          }
+        }
+      }
+    });
+
+    return NextResponse.json({ categories });
+
   } catch (error) {
-    return handleServiceErrorResponse('Error fetching categories', error);
+    console.error('Error fetching categories:', error);
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    );
   }
 }
 
 export async function POST(request: NextRequest) {
-  const session = await getSessionWithPermissions();
-
-  if (!session) {
-    return NextResponse.json(
-      { error: 'Unauthorized' },
-      { status: 401 }
-    );
-  }
-
   try {
+    const session = await getSessionWithPermissions();
+    
+    if (!session || !session.user.permissions.MANAGE_CATEGORIES) {
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      );
+    }
+
     const body = await request.json();
-    const result = await createCategoryForUser(body, session.user);
+    const { title, description } = body;
+
+    if (!title) {
+      return NextResponse.json(
+        { error: 'Title is required' },
+        { status: 400 }
+      );
+    }
+
+    // Check if category already exists
+    const existingCategory = await prisma.category.findUnique({
+      where: { title }
+    });
+
+    if (existingCategory) {
+      return NextResponse.json(
+        { error: 'Category with this title already exists' },
+        { status: 400 }
+      );
+    }
+
+    const category = await prisma.category.create({
+      data: {
+        title,
+        description: description || null,
+        isDefault: false
+      }
+    });
 
     return NextResponse.json({
       success: true,
-      ...result
+      category
     });
 
   } catch (error) {
-    return handleServiceErrorResponse('Error creating category', error);
+    console.error('Error creating category:', error);
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    );
   }
 }

@@ -59,15 +59,17 @@ model Category {
 }
 
 model Product {
-  id           String        @id @default(cuid())
-  name         String
-  price        Decimal       @db.Decimal(10, 2)
-  description  String?
-  categoryId   String
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-  invoiceItems InvoiceItem[]
-  category     Category      @relation(fields: [categoryId], references: [id])
+  id                String        @id @default(cuid())
+  name              String
+  price             Decimal       @db.Decimal(10, 2)
+  description       String?
+  categoryId        String
+  stockQuantity     Int           @default(0)
+  lowStockThreshold Int           @default(0)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  invoiceItems      InvoiceItem[]
+  category          Category      @relation(fields: [categoryId], references: [id])
 
   @@map("products")
 }

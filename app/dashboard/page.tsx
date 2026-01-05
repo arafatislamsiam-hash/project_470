@@ -1,5 +1,5 @@
 import Navigation from '@/components/navigation';
-import { getDashboardSummary } from '@/server/services/dashboardService';
+import { prisma } from '@/lib/db';
 import { getServerSession } from 'next-auth';
 import Link from 'next/link';
 
@@ -11,8 +11,46 @@ export default async function DashboardPage() {
   }
 
   // Get stats
-  const { totalUsers, totalProducts, totalCategories, totalInvoices, recentInvoices } =
-    await getDashboardSummary();
+  const [
+    totalUsers,
+    totalProducts,
+    totalCategories,
+    totalInvoices,
+    recentInvoices,
+    lowStockCandidates
+  ] = await Promise.all([
+    prisma.user.count(),
+    prisma.product.count(),
+    prisma.category.count(),
+    prisma.invoice.count(),
+    prisma.invoice.findMany({
+      take: 5,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        user: { select: { name: true } },
+        items: { include: { product: { select: { name: true } } } }
+      }
+    }),
+    prisma.product.findMany({
+      where: {
+        lowStockThreshold: { gt: 0 }
+      },
+      include: {
+        category: {
+          select: {
+            title: true
+          }
+        }
+      },
+      orderBy: { stockQuantity: 'asc' }
+    })
+  ]);
+
+  const lowStockAlerts = lowStockCandidates.filter(
+    (product) => product.stockQuantity <= product.lowStockThreshold
+  );
+  const lowStockCount = lowStockAlerts.length;
+  const lowStockProducts = lowStockAlerts.slice(0, 5);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -25,11 +63,11 @@ export default async function DashboardPage() {
           </h1>
 
           {/* Stats Grid */}
-          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4 mb-8">
+          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-5 mb-8">
             <div className="bg-white overflow-hidden shadow rounded-lg">
               <div className="p-5">
                 <div className="flex items-center">
-                  <div className="shrink-0">
+                  <div className="flex-shrink-0">
                     <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center">
                       <span className="text-white font-bold">U</span>
                     </div>
@@ -51,7 +89,7 @@ export default async function DashboardPage() {
             <div className="bg-white overflow-hidden shadow rounded-lg">
               <div className="p-5">
                 <div className="flex items-center">
-                  <div className="shrink-0">
+                  <div className="flex-shrink-0">
                     <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
                       <span className="text-white font-bold">P</span>
                     </div>
@@ -73,7 +111,7 @@ export default async function DashboardPage() {
             <div className="bg-white overflow-hidden shadow rounded-lg">
               <div className="p-5">
                 <div className="flex items-center">
-                  <div className="shrink-0">
+                  <div className="flex-shrink-0">
                     <div className="w-8 h-8 bg-yellow-500 rounded-full flex items-center justify-center">
                       <span className="text-white font-bold">C</span>
                     </div>
@@ -95,7 +133,7 @@ export default async function DashboardPage() {
             <div className="bg-white overflow-hidden shadow rounded-lg">
               <div className="p-5">
                 <div className="flex items-center">
-                  <div className="shrink-0">
+                  <div className="flex-shrink-0">
                     <div className="w-8 h-8 bg-purple-500 rounded-full flex items-center justify-center">
                       <span className="text-white font-bold">I</span>
                     </div>
@@ -113,7 +151,74 @@ export default async function DashboardPage() {
                 </div>
               </div>
             </div>
+            <div className="bg-white overflow-hidden shadow rounded-lg">
+              <div className="p-5">
+                <div className="flex items-center">
+                  <div className="flex-shrink-0">
+                    <div className="w-8 h-8 bg-red-500 rounded-full flex items-center justify-center">
+                      <span className="text-white font-bold">L</span>
+                    </div>
+                  </div>
+                  <div className="ml-5 w-0 flex-1">
+                    <dl>
+                      <dt className="text-sm font-medium text-gray-500 truncate">
+                        Low Stock Products
+                      </dt>
+                      <dd className="text-lg font-medium text-gray-900">
+                        {lowStockCount}
+                      </dd>
+                    </dl>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
+
+          {/* Low Stock Alerts */}
+          {lowStockProducts.length > 0 && (
+            <div className="bg-white shadow rounded-lg mb-8">
+              <div className="px-4 py-5 sm:px-6 flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg leading-6 font-medium text-gray-900">
+                    Inventory Alerts
+                  </h3>
+                  <p className="mt-1 max-w-2xl text-sm text-gray-500">
+                    Products that reached their low-stock threshold.
+                  </p>
+                </div>
+                <Link
+                  href="/products"
+                  className="text-sm font-medium text-blue-600 hover:text-blue-800"
+                >
+                  Manage Inventory
+                </Link>
+              </div>
+              <div className="border-t border-gray-200">
+                <ul className="divide-y divide-gray-200">
+                  {lowStockProducts.map((product) => (
+                    <li key={product.id} className="px-4 py-4 sm:px-6 flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">
+                          {product.name}
+                        </p>
+                        <p className="text-sm text-gray-500">
+                          {product.category?.title || 'Uncategorised'}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm font-semibold text-red-600">
+                          {product.stockQuantity} unit{product.stockQuantity === 1 ? '' : 's'} left
+                        </p>
+                        <p className="text-xs text-gray-500">
+                          Threshold: {product.lowStockThreshold}
+                        </p>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          )}
 
           {/* Recent Invoices */}
           <div className="bg-white shadow rounded-lg">
@@ -133,7 +238,7 @@ export default async function DashboardPage() {
                       <li className="px-4 py-4 sm:px-6 cursor-pointer hover:bg-gray-50">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center">
-                            <div className="shrink-0">
+                            <div className="flex-shrink-0">
                               <div className="w-10 h-10 bg-gray-300 rounded-full flex items-center justify-center">
                                 <span className="text-gray-600 font-bold">
                                   {invoice.invoiceNo.slice(-2)}
