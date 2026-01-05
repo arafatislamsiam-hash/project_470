@@ -83,6 +83,14 @@ export default function Navigation() {
                   Create Invoice
                 </Link>
               )}
+              {permissions.VIEW_ALL_INVOICES && (
+                <Link
+                  href="/invoices"
+                  className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium"
+                >
+                  Invoices
+                </Link>
+              )}
             </div>
           </div>
 
@@ -170,6 +178,14 @@ export default function Navigation() {
               className="text-gray-600 hover:text-gray-900 block px-3 py-2 rounded-md text-base font-medium"
             >
               Create Invoice
+            </Link>
+          )}
+          {permissions.VIEW_ALL_INVOICES && (
+            <Link
+              href="/invoices"
+              className="text-gray-600 hover:text-gray-900 block px-3 py-2 rounded-md text-base font-medium"
+            >
+              Invoices
             </Link>
           )}
         </div>

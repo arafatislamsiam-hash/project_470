@@ -4,6 +4,7 @@ import {
   deleteInvoice,
   deleteInvoiceItems,
   findInvoiceWithItems,
+  findInvoicesPaged,
   findPatientById,
   findProductById,
   updateInvoice,
@@ -47,6 +48,25 @@ const invoiceDetailInclude: Prisma.InvoiceInclude = {
     select: {
       name: true,
       email: true,
+    },
+  },
+};
+
+const invoiceListInclude: Prisma.InvoiceInclude = {
+  patient: true,
+  user: {
+    select: {
+      name: true,
+      email: true,
+    },
+  },
+  items: {
+    include: {
+      product: {
+        select: {
+          name: true,
+        },
+      },
     },
   },
 };
@@ -268,6 +288,34 @@ export async function updateInvoiceForUser(payload: InvoicePayload & { id: strin
     },
     invoiceDetailInclude
   );
+}
+
+export async function listInvoicesForUser(
+  params: { page: number; limit: number },
+  user?: SessionUser
+) {
+  ensureUser(user);
+  const page = params.page > 0 ? params.page : 1;
+  const limit = params.limit > 0 ? params.limit : 10;
+  const skip = (page - 1) * limit;
+
+  const where: Prisma.InvoiceWhereInput | undefined = user.permissions?.VIEW_ALL_INVOICES
+    ? undefined
+    : { createdBy: user.id };
+
+  const { invoices, totalInvoices } = await findInvoicesPaged({
+    skip,
+    take: limit,
+    where,
+    include: invoiceListInclude,
+  });
+
+  return {
+    invoices,
+    totalInvoices,
+    totalPages: Math.ceil(totalInvoices / limit),
+    currentPage: page,
+  };
 }
 
 export async function deleteInvoiceForUser(id: string, user?: SessionUser) {
