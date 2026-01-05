@@ -1,5 +1,6 @@
 'use client';
 
+import NotificationBell from '@/components/notification-bell';
 import { signOut, useSession } from 'next-auth/react';
 import Image from 'next/image';
 import Link from 'next/link';
@@ -116,7 +117,8 @@ export default function Navigation() {
             </div>
           </div>
 
-          <div className="flex items-center">
+          <div className="flex items-center space-x-4">
+            <NotificationBell />
             <div className="relative">
               <button
                 onClick={() => setIsMenuOpen(!isMenuOpen)}

@@ -1,5 +1,6 @@
 import { hashPassword } from '@/lib/auth';
 import { prisma } from '@/lib/db';
+import { notifyUserAssignment } from '@/lib/notifications';
 import { getSessionWithPermissions } from '@/lib/session';
 import { NextRequest, NextResponse } from 'next/server';
 
@@ -122,6 +123,13 @@ export async function POST(request: NextRequest) {
           }
         }
       }
+    });
+
+    await notifyUserAssignment({
+      userId: user.id,
+      roleName: role.name,
+      assignedById: session.user.id,
+      assignedByName: session.user.name
     });
 
     return NextResponse.json({

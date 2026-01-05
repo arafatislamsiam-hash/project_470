@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db';
 import { generateInvoiceNumber } from '@/lib/invoice-utils';
+import { determineInvoiceStatus, notifyInvoiceStatusChange } from '@/lib/notifications';
 import { getSessionWithPermissions } from '@/lib/session';
 import { NextRequest, NextResponse } from 'next/server';
 
@@ -201,6 +202,7 @@ export async function POST(request: NextRequest) {
     }
 
     const finalTotal = Math.max(0, calculatedSubtotal - totalItemDiscounts - calculatedDiscountAmount);
+    const invoiceStatus = determineInvoiceStatus(finalTotal, parseFloat(paidAmount.toString()));
 
     // Create invoice with items and update inventory atomically
     const invoice = await prisma.$transaction(async (tx) => {
@@ -215,6 +217,7 @@ export async function POST(request: NextRequest) {
           discountType,
           discountAmount: calculatedDiscountAmount,
           totalAmount: finalTotal,
+          status: invoiceStatus,
           paidAmount: parseFloat(paidAmount.toString()),
           createdBy: session.user.id,
           appointmentId: appointmentToLink?.id,
@@ -533,6 +536,7 @@ export async function PUT(request: NextRequest) {
     }
 
     const finalTotal = Math.max(0, calculatedSubtotal - totalItemDiscounts - calculatedDiscountAmount);
+    const updatedStatus = determineInvoiceStatus(finalTotal, parseFloat(paidAmount.toString()));
 
     const inventoryAdjustments: Record<string, number> = {};
     const allProductIds = new Set([...Object.keys(previousUsage), ...Object.keys(productUsage)]);
@@ -558,6 +562,7 @@ export async function PUT(request: NextRequest) {
           discountType,
           discountAmount: calculatedDiscountAmount,
           totalAmount: finalTotal,
+          status: updatedStatus,
           paidAmount: parseFloat(paidAmount.toString()),
           updatedAt: new Date(),
           items: {
@@ -608,6 +613,17 @@ export async function PUT(request: NextRequest) {
 
       return invoiceRecord;
     });
+
+    if (existingInvoice.status !== updatedStatus) {
+      await notifyInvoiceStatusChange({
+        invoiceId: updatedInvoice.id,
+        invoiceNo: updatedInvoice.invoiceNo,
+        newStatus: updatedStatus,
+        actorId: session.user.id,
+        actorName: session.user.name,
+        recipientId: existingInvoice.createdBy
+      });
+    }
 
     return NextResponse.json({
       success: true,
