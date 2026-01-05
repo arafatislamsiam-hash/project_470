@@ -1,8 +1,12 @@
 import { generateInvoiceNumber } from '@/lib/invoice-utils';
 import {
   createInvoice,
+  deleteInvoice,
+  deleteInvoiceItems,
+  findInvoiceWithItems,
   findPatientById,
   findProductById,
+  updateInvoice,
 } from '@/server/repositories/invoiceRepository';
 import { ServiceError } from '@/server/services/serviceErrors';
 import { SessionUser } from '@/server/services/types';
@@ -210,4 +214,69 @@ export async function createInvoiceForUser(payload: InvoicePayload, user?: Sessi
     },
     invoiceDetailInclude
   );
+}
+
+export async function updateInvoiceForUser(payload: InvoicePayload & { id: string }, user?: SessionUser) {
+  ensureUser(user);
+  ensureCanCreateInvoice(user);
+  await ensurePatientExists(payload.patientId);
+
+  if (!payload.id) {
+    throw new InvoiceServiceError('Invoice ID is required', 400);
+  }
+
+  const existingInvoice = await findInvoiceWithItems(payload.id);
+
+  if (!existingInvoice) {
+    throw new InvoiceServiceError('Invoice not found', 404);
+  }
+
+  if (!user.permissions?.VIEW_ALL_INVOICES && existingInvoice.createdBy !== user.id) {
+    throw new InvoiceServiceError('Unauthorized to update this invoice', 403);
+  }
+
+  const discount = normalizeNumber(payload.discount);
+  const discountType = payload.discountType || 'percentage';
+  const paidAmount = normalizeNumber(payload.paidAmount);
+
+  const { invoiceItems, calculatedSubtotal, totalItemDiscounts } = await buildInvoiceItems(payload.items);
+  const { calculatedDiscountAmount, finalTotal } = calculateDiscounts(
+    calculatedSubtotal,
+    totalItemDiscounts,
+    discount,
+    discountType
+  );
+
+  await deleteInvoiceItems(payload.id);
+
+  return updateInvoice(
+    payload.id,
+    {
+      patient: { connect: { id: payload.patientId } },
+      branch: payload.branch || undefined,
+      corporateId: payload.corporateId || undefined,
+      subtotal: calculatedSubtotal,
+      discount,
+      discountType,
+      discountAmount: calculatedDiscountAmount,
+      totalAmount: finalTotal,
+      paidAmount,
+      updatedAt: new Date(),
+      items: {
+        create: invoiceItems,
+      },
+    },
+    invoiceDetailInclude
+  );
+}
+
+export async function deleteInvoiceForUser(id: string, user?: SessionUser) {
+  ensureUser(user);
+
+  if (!id) {
+    throw new InvoiceServiceError('Invoice ID is required', 400);
+  }
+
+  await deleteInvoiceItems(id);
+  await deleteInvoice(id);
 }
