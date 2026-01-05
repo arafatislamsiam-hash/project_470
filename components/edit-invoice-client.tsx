@@ -72,6 +72,13 @@ interface SerializedInvoice {
       };
     } | null;
   }[];
+  appointment?: {
+    id: string;
+    appointmentDate: string;
+    status: string;
+    reason?: string | null;
+    branch?: string | null;
+  } | null;
 }
 
 interface EditInvoiceClientProps {
@@ -102,6 +109,15 @@ export default function EditInvoiceClient({ invoice }: EditInvoiceClientProps) {
   const [filteredProducts, setFilteredProducts] = useState<{ [key: string]: Product[] }>({});
   const [showDropdowns, setShowDropdowns] = useState<{ [key: string]: boolean }>({});
   const searchRefs = useRef<{ [key: string]: HTMLInputElement | null }>({});
+  const appointmentInfo = invoice.appointment
+    ? {
+      ...invoice.appointment,
+      formattedDate: new Date(invoice.appointment.appointmentDate).toLocaleString(undefined, {
+        dateStyle: 'medium',
+        timeStyle: 'short'
+      })
+    }
+    : null;
   const getProductById = useCallback((productId: string) => products.find(product => product.id === productId), [products]);
   const getAllocatedQuantity = useCallback((productId: string, excludeItemId?: string) => {
     return invoiceItems.reduce((total, item) => {
@@ -563,6 +579,22 @@ export default function EditInvoiceClient({ invoice }: EditInvoiceClientProps) {
           {error && (
             <div className="mb-4 rounded-md bg-red-50 p-4">
               <div className="text-sm text-red-700">{error}</div>
+            </div>
+          )}
+
+          {appointmentInfo && (
+            <div className="mb-6 rounded-md border border-blue-200 bg-blue-50 p-4">
+              <p className="text-sm font-medium text-blue-900">
+                Linked Appointment • {appointmentInfo.formattedDate}
+              </p>
+              <div className="mt-1 text-xs text-blue-800 space-x-4">
+                <span>Status: {appointmentInfo.status.replace('_', ' ')}</span>
+                {appointmentInfo.reason && <span>Reason: {appointmentInfo.reason}</span>}
+                {appointmentInfo.branch && <span>Branch: {appointmentInfo.branch}</span>}
+              </div>
+              <p className="mt-2 text-xs text-blue-700">
+                Appointment status updates automatically when this invoice is saved or deleted.
+              </p>
             </div>
           )}
 

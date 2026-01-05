@@ -27,10 +27,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { items, discount = 0, discountType = 'percentage', patientId, branch, paidAmount = 0, corporateId } = body;
-
-
-    console.log(corporateId)
+    const { items, discount = 0, discountType = 'percentage', patientId, branch, paidAmount = 0, corporateId, appointmentId } = body;
 
     if (!items || !Array.isArray(items) || items.length === 0) {
       return NextResponse.json(
@@ -56,6 +53,55 @@ export async function POST(request: NextRequest) {
         { error: 'Patient not found' },
         { status: 404 }
       );
+    }
+
+    let appointmentToLink: {
+      id: string;
+      status: string;
+      patientId: string;
+    } | null = null;
+
+    if (appointmentId) {
+      const appointment = await prisma.appointment.findUnique({
+        where: { id: appointmentId },
+        include: {
+          invoice: {
+            select: {
+              id: true
+            }
+          }
+        }
+      });
+
+      if (!appointment) {
+        return NextResponse.json(
+          { error: 'Appointment not found' },
+          { status: 404 }
+        );
+      }
+
+      if (appointment.patientId !== patientId) {
+        return NextResponse.json(
+          { error: 'Appointment does not belong to the selected patient' },
+          { status: 400 }
+        );
+      }
+
+      if (appointment.status !== 'scheduled') {
+        return NextResponse.json(
+          { error: 'Only scheduled appointments can be linked to invoices' },
+          { status: 400 }
+        );
+      }
+
+      if (appointment.invoice) {
+        return NextResponse.json(
+          { error: 'This appointment is already linked to an invoice' },
+          { status: 400 }
+        );
+      }
+
+      appointmentToLink = appointment;
     }
 
     // Generate invoice number safely
@@ -171,6 +217,7 @@ export async function POST(request: NextRequest) {
           totalAmount: finalTotal,
           paidAmount: parseFloat(paidAmount.toString()),
           createdBy: session.user.id,
+          appointmentId: appointmentToLink?.id,
           items: {
             create: invoiceItems
           }
@@ -184,6 +231,15 @@ export async function POST(request: NextRequest) {
                   category: true
                 }
               }
+            }
+          },
+          appointment: {
+            select: {
+              id: true,
+              appointmentDate: true,
+              status: true,
+              reason: true,
+              branch: true
             }
           },
           user: {
@@ -207,6 +263,15 @@ export async function POST(request: NextRequest) {
           })
         )
       );
+
+      if (appointmentToLink) {
+        await tx.appointment.update({
+          where: { id: appointmentToLink.id },
+          data: {
+            status: 'completed'
+          }
+        });
+      }
 
       return createdInvoice;
     });
@@ -247,6 +312,13 @@ export async function GET(request: NextRequest) {
       orderBy: { createdAt: 'desc' },
       include: {
         patient: true,
+        appointment: {
+          select: {
+            id: true,
+            appointmentDate: true,
+            status: true
+          }
+        },
         user: {
           select: {
             name: true,
@@ -304,8 +376,6 @@ export async function PUT(request: NextRequest) {
 
     const body = await request.json();
     const { id, items, discount = 0, discountType = 'percentage', patientId, branch, paidAmount = 0, corporateId } = body;
-
-    console.log(corporateId)
 
     if (!id) {
       return NextResponse.json(
@@ -505,6 +575,15 @@ export async function PUT(request: NextRequest) {
               }
             }
           },
+          appointment: {
+            select: {
+              id: true,
+              appointmentDate: true,
+              status: true,
+              reason: true,
+              branch: true
+            }
+          },
           user: {
             select: {
               name: true,
@@ -562,7 +641,15 @@ export async function DELETE(request: Request) {
   try {
     const invoice = await prisma.invoice.findUnique({
       where: { id },
-      include: { items: true }
+      include: {
+        items: true,
+        appointment: {
+          select: {
+            id: true,
+            status: true
+          }
+        }
+      }
     });
 
     if (!invoice) {
@@ -580,6 +667,15 @@ export async function DELETE(request: Request) {
     });
 
     await prisma.$transaction(async (tx) => {
+      if (invoice.appointment) {
+        await tx.appointment.update({
+          where: { id: invoice.appointment.id },
+          data: {
+            status: 'scheduled'
+          }
+        });
+      }
+
       await Promise.all(
         Object.entries(restockMap).map(([productId, qty]) =>
           tx.product.update({

@@ -79,6 +79,14 @@ export default function Navigation() {
                   Patients
                 </Link>
               )}
+              {(permissions.MANAGE_PATIENT || permissions.CREATE_INVOICE) && (
+                <Link
+                  href="/appointments"
+                  className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium"
+                >
+                  Appointments
+                </Link>
+              )}
 
               {permissions.MANAGE_CATEGORIES && (
                 <Link
@@ -171,6 +179,14 @@ export default function Navigation() {
               className="text-gray-600 hover:text-gray-900 block px-3 py-2 rounded-md text-base font-medium"
             >
               Patients
+            </Link>
+          )}
+          {(permissions.MANAGE_PATIENT || permissions.CREATE_INVOICE) && (
+            <Link
+              href="/appointments"
+              className="text-gray-600 hover:text-gray-900 block px-3 py-2 rounded-md text-base font-medium"
+            >
+              Appointments
             </Link>
           )}
 

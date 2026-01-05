@@ -43,6 +43,15 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
           patientMobile: true,
           patientId: true
         }
+      },
+      appointment: {
+        select: {
+          id: true,
+          appointmentDate: true,
+          status: true,
+          reason: true,
+          branch: true
+        }
       }
     }
   });
@@ -69,6 +78,13 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
     discountAmount: Number(invoice.discountAmount),
     totalAmount: Number(invoice.totalAmount),
     paidAmount: Number((invoice).paidAmount || 0),
+    appointment: invoice.appointment ? {
+      id: invoice.appointment.id,
+      status: invoice.appointment.status,
+      appointmentDate: invoice.appointment.appointmentDate.toISOString(),
+      reason: invoice.appointment.reason,
+      branch: invoice.appointment.branch
+    } : null,
     items: invoice.items.map(item => ({
       ...item,
       unitPrice: Number(item.unitPrice),

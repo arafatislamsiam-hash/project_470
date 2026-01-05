@@ -20,6 +20,13 @@ interface InvoiceViewProps {
     totalAmount: number;
     paidAmount: number;
     createdAt: Date;
+    appointment?: {
+      id: string;
+      appointmentDate: string;
+      status: string;
+      reason?: string | null;
+      branch?: string | null;
+    } | null;
     user: {
       name: string;
       email: string;
@@ -46,6 +53,15 @@ interface InvoiceViewProps {
 
 export default function InvoiceView({ invoice }: InvoiceViewProps) {
   const router = useRouter();
+  const appointmentInfo = invoice.appointment
+    ? {
+      ...invoice.appointment,
+      formattedDate: new Date(invoice.appointment.appointmentDate).toLocaleString(undefined, {
+        dateStyle: 'medium',
+        timeStyle: 'short'
+      })
+    }
+    : null;
 
   const handlePrint = () => {
     const printWindow = window.open('', '_blank');
@@ -353,6 +369,29 @@ export default function InvoiceView({ invoice }: InvoiceViewProps) {
               </div>
             </div>
 
+            ${appointmentInfo ? `
+            <div class="patient-section">
+              <div class="patient-row">
+                <span class="patient-label">APPOINTMENT :</span>
+                <span class="patient-value">${appointmentInfo.formattedDate}</span>
+              </div>
+              <div class="patient-row">
+                <span class="patient-label">STATUS :</span>
+                <span class="patient-value">${appointmentInfo.status}</span>
+              </div>
+              ${appointmentInfo.reason ? `
+              <div class="patient-row">
+                <span class="patient-label">REASON :</span>
+                <span class="patient-value">${appointmentInfo.reason}</span>
+              </div>` : ''}
+              ${appointmentInfo.branch ? `
+              <div class="patient-row">
+                <span class="patient-label">BRANCH :</span>
+                <span class="patient-value">${appointmentInfo.branch}</span>
+              </div>` : ''}
+            </div>
+            ` : ''}
+
             <div class="table-section">
               <table class="main-table">
                 <thead class="table-header">
@@ -532,6 +571,19 @@ export default function InvoiceView({ invoice }: InvoiceViewProps) {
           </div>
         </div>
       </div>
+
+      {appointmentInfo && (
+        <div className="mx-4 my-4 rounded-md border border-blue-200 bg-blue-50 px-4 py-3">
+          <p className="text-sm font-medium text-blue-900">
+            Linked Appointment • {appointmentInfo.formattedDate}
+          </p>
+          <div className="mt-1 flex flex-wrap gap-4 text-xs text-blue-800">
+            <span>Status: {appointmentInfo.status.replace('_', ' ')}</span>
+            {appointmentInfo.reason && <span>Reason: {appointmentInfo.reason}</span>}
+            {appointmentInfo.branch && <span>Branch: {appointmentInfo.branch}</span>}
+          </div>
+        </div>
+      )}
 
       {/* Invoice content for PDF generation - Exact Dental Clinic Format */}
       <div id="invoice-content" className="pt-8 bg-white relative" style={{ fontFamily: 'Arial, sans-serif' }}>

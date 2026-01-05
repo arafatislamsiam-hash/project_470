@@ -23,6 +23,14 @@ interface Patient {
   patientMobile: string;
 }
 
+interface AppointmentSummary {
+  id: string;
+  appointmentDate: string;
+  status: string;
+  reason?: string | null;
+  branch?: string | null;
+}
+
 interface InvoiceItem {
   id: string;
   productId: string;
@@ -71,6 +79,11 @@ export default function CreateInvoicePage() {
   const [filteredProducts, setFilteredProducts] = useState<{ [key: string]: Product[] }>({});
   const [showDropdowns, setShowDropdowns] = useState<{ [key: string]: boolean }>({});
   const searchRefs = useRef<{ [key: string]: HTMLInputElement | null }>({});
+  const [patientAppointments, setPatientAppointments] = useState<AppointmentSummary[]>([]);
+  const [selectedAppointmentId, setSelectedAppointmentId] = useState<string>('');
+  const [appointmentsLoading, setAppointmentsLoading] = useState(false);
+  const [appointmentsError, setAppointmentsError] = useState('');
+  const selectedPatientId = selectedPatient?.id || '';
   const getProductById = useCallback((productId: string) => products.find(product => product.id === productId), [products]);
 
   const getAllocatedQuantity = useCallback((productId: string, excludeItemId?: string) => {
@@ -155,6 +168,58 @@ export default function CreateInvoicePage() {
       console.error('Error fetching products:', error);
     }
   };
+
+  const fetchAppointmentsForPatient = useCallback(async (patientId: string) => {
+    if (!patientId) {
+      return;
+    }
+    setAppointmentsLoading(true);
+    setAppointmentsError('');
+    try {
+      const response = await fetch(`/api/appointments?patientId=${patientId}&status=scheduled&upcoming=true`);
+      if (response.ok) {
+        const data = await response.json();
+        const scheduledAppointments: AppointmentSummary[] = (data.appointments || []).map((appointment: {
+          id: string;
+          appointmentDate: string;
+          status: string;
+          reason?: string | null;
+          branch?: string | null;
+        }) => ({
+          id: appointment.id,
+          appointmentDate: appointment.appointmentDate,
+          status: appointment.status,
+          reason: appointment.reason,
+          branch: appointment.branch
+        }));
+        setPatientAppointments(scheduledAppointments);
+        if (!scheduledAppointments.find((appt) => appt.id === selectedAppointmentId)) {
+          setSelectedAppointmentId('');
+        }
+      } else {
+        setAppointmentsError('Failed to load appointments for this patient.');
+        setPatientAppointments([]);
+        setSelectedAppointmentId('');
+      }
+    } catch (error) {
+      console.error('Error fetching appointments:', error);
+      setAppointmentsError('Unable to load appointments at this time.');
+      setPatientAppointments([]);
+      setSelectedAppointmentId('');
+    } finally {
+      setAppointmentsLoading(false);
+    }
+  }, [selectedAppointmentId]);
+
+  useEffect(() => {
+    if (selectedPatientId) {
+      fetchAppointmentsForPatient(selectedPatientId);
+    } else {
+      setPatientAppointments([]);
+      setSelectedAppointmentId('');
+      setAppointmentsError('');
+    }
+  }, [selectedPatientId, fetchAppointmentsForPatient]);
 
   const addRow = () => {
     const newId = Date.now().toString();
@@ -388,6 +453,9 @@ export default function CreateInvoicePage() {
         const data = await response.json();
         setSelectedPatient(data.patient);
         setPatientSelectionMode('new');
+        setSelectedAppointmentId('');
+        setPatientAppointments([]);
+        setAppointmentsError('');
         setShowNewPatientModal(false);
         setNewPatientForm({ patientName: '', patientMobile: '' });
         setError('');
@@ -405,6 +473,9 @@ export default function CreateInvoicePage() {
     if (searchResults.length > 0) {
       setSelectedPatient(foundPatient);
       setPatientSelectionMode('existing');
+      setSelectedAppointmentId('');
+      setPatientAppointments([]);
+      setAppointmentsError('');
       setMobileSearch('');
       setSearchResults([]);
     }
@@ -413,6 +484,9 @@ export default function CreateInvoicePage() {
   const resetPatientSelection = () => {
     setSelectedPatient(null);
     setPatientSelectionMode('none');
+    setSelectedAppointmentId('');
+    setPatientAppointments([]);
+    setAppointmentsError('');
     setMobileSearch('');
     setSearchResults([]);
     setShowNewPatientModal(false);
@@ -464,6 +538,7 @@ export default function CreateInvoicePage() {
           branch: branch,
           corporateId,
           paidAmount: paidAmount,
+          appointmentId: selectedAppointmentId || null,
           subtotal: calculateSubtotal(),
           itemDiscounts: calculateTotalDiscount(),
           discountAmount: calculateDiscountAmount(),
@@ -605,6 +680,74 @@ export default function CreateInvoicePage() {
                     </div>
                   )}
                 </div>
+
+                {selectedPatient && (
+                  <div className="mb-6 border-t pt-6">
+                    <div className="flex items-center justify-between mb-3">
+                      <div>
+                        <h4 className="text-lg font-medium text-gray-900">Linked Appointment</h4>
+                        <p className="text-sm text-gray-500">
+                          Attach an upcoming appointment to automatically mark it completed.
+                        </p>
+                      </div>
+                      {selectedAppointmentId && (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedAppointmentId('')}
+                          className="text-sm text-blue-600 hover:text-blue-800"
+                        >
+                          Clear Selection
+                        </button>
+                      )}
+                    </div>
+
+                    {appointmentsLoading ? (
+                      <div className="text-sm text-gray-500">Loading upcoming appointments...</div>
+                    ) : appointmentsError ? (
+                      <div className="text-sm text-red-600">{appointmentsError}</div>
+                    ) : patientAppointments.length === 0 ? (
+                      <div className="text-sm text-gray-500">
+                        No upcoming scheduled appointments for this patient.
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {patientAppointments.map((appointment) => {
+                          const formattedDate = new Date(appointment.appointmentDate).toLocaleString(undefined, {
+                            dateStyle: 'medium',
+                            timeStyle: 'short'
+                          });
+                          const isSelected = selectedAppointmentId === appointment.id;
+                          return (
+                            <label
+                              key={appointment.id}
+                              className={`flex items-start gap-3 rounded-lg border p-3 cursor-pointer ${isSelected ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-300'
+                                }`}
+                            >
+                              <input
+                                type="radio"
+                                name="appointment"
+                                className="mt-1 h-4 w-4 text-blue-600 focus:ring-blue-500"
+                                checked={isSelected}
+                                onChange={() => setSelectedAppointmentId(appointment.id)}
+                              />
+                              <div>
+                                <p className="font-medium text-gray-900">
+                                  {formattedDate}
+                                  {appointment.branch && (
+                                    <span className="text-sm text-gray-500"> • {appointment.branch}</span>
+                                  )}
+                                </p>
+                                {appointment.reason && (
+                                  <p className="text-sm text-gray-600">Reason: {appointment.reason}</p>
+                                )}
+                              </div>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div className="space-y-4">
                   {invoiceItems.map((item) => {
