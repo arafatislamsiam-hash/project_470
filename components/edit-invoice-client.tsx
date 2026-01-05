@@ -1,8 +1,9 @@
 'use client';
 
+import PatientCreditSelector, { AppliedCreditSelection, InitialCreditSelection } from '@/components/patient-credit-selector';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 interface Product {
   id: string;
@@ -79,6 +80,11 @@ interface SerializedInvoice {
     reason?: string | null;
     branch?: string | null;
   } | null;
+  appliedCredits?: {
+    creditNoteId: string;
+    creditNo: string;
+    amount: number;
+  }[];
 }
 
 interface EditInvoiceClientProps {
@@ -139,6 +145,31 @@ export default function EditInvoiceClient({ invoice }: EditInvoiceClientProps) {
     product.lowStockThreshold > 0 && product.stockQuantity <= product.lowStockThreshold
   ), []);
   const isProductOutOfStock = useCallback((product: Product) => product.stockQuantity <= 0, []);
+  const handleCreditSelectionChange = useCallback(
+    (credits: AppliedCreditSelection[], total: number) => {
+      setAppliedCredits(credits);
+      setAppliedCreditTotal(total);
+    },
+    []
+  );
+  const baseCreditSelections: InitialCreditSelection[] = useMemo(
+    () =>
+      invoice.appliedCredits?.map((credit) => ({
+        creditNoteId: credit.creditNoteId,
+        creditNo: credit.creditNo,
+        amount: credit.amount
+      })) ?? [],
+    [invoice.appliedCredits]
+  );
+  const [appliedCredits, setAppliedCredits] = useState<AppliedCreditSelection[]>(
+    baseCreditSelections.map((credit) => ({
+      creditNoteId: credit.creditNoteId,
+      amount: credit.amount
+    }))
+  );
+  const [appliedCreditTotal, setAppliedCreditTotal] = useState(
+    baseCreditSelections.reduce((sum, credit) => sum + credit.amount, 0)
+  );
 
   // Debounced search for patient by mobile
   const debouncedSearchPatient = useCallback(
@@ -429,7 +460,7 @@ export default function EditInvoiceClient({ invoice }: EditInvoiceClientProps) {
   };
 
   const calculateDueAmount = () => {
-    return Math.max(0, calculateGrandTotal() - paidAmount);
+    return Math.max(0, calculateGrandTotal() - paidAmount - appliedCreditTotal);
   };
 
   const handleCreateNewPatient = async () => {
@@ -485,6 +516,8 @@ export default function EditInvoiceClient({ invoice }: EditInvoiceClientProps) {
     setSearchResults([]);
     setShowNewPatientModal(false);
     setNewPatientForm({ patientName: '', patientMobile: '' });
+    setAppliedCredits([]);
+    setAppliedCreditTotal(0);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -505,6 +538,12 @@ export default function EditInvoiceClient({ invoice }: EditInvoiceClientProps) {
 
     if (validItems.length === 0) {
       setError('Please add at least one valid product to the invoice.');
+      setLoading(false);
+      return;
+    }
+
+    if (appliedCreditTotal - 0.01 > calculateGrandTotal()) {
+      setError('Credits cannot exceed the invoice total.');
       setLoading(false);
       return;
     }
@@ -536,7 +575,8 @@ export default function EditInvoiceClient({ invoice }: EditInvoiceClientProps) {
           subtotal: calculateSubtotal(),
           itemDiscounts: calculateTotalDiscount(),
           discountAmount: calculateDiscountAmount(),
-          grandTotal: calculateGrandTotal()
+          grandTotal: calculateGrandTotal(),
+          appliedCredits
         }),
       });
 
@@ -685,6 +725,16 @@ export default function EditInvoiceClient({ invoice }: EditInvoiceClientProps) {
               </div>
             )}
           </div>
+
+          {selectedPatient && (
+            <div className="mb-6">
+              <PatientCreditSelector
+                patientId={selectedPatient.id}
+                initialSelections={selectedPatient.id === invoice.patient.id ? baseCreditSelections : []}
+                onChange={handleCreditSelectionChange}
+              />
+            </div>
+          )}
 
           <div className="space-y-4">
             {invoiceItems.map((item) => {
@@ -1054,6 +1104,12 @@ export default function EditInvoiceClient({ invoice }: EditInvoiceClientProps) {
                   <span>Paid:</span>
                   <span>৳{paidAmount.toFixed(2)}</span>
                 </div>
+                {appliedCreditTotal > 0 && (
+                  <div className="flex justify-between text-sm text-blue-600">
+                    <span>Credits Applied:</span>
+                    <span>-৳{appliedCreditTotal.toFixed(2)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between text-sm font-medium text-orange-600">
                   <span>Due:</span>
                   <span>৳{calculateDueAmount().toFixed(2)}</span>

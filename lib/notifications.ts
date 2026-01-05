@@ -2,12 +2,13 @@ import { prisma } from '@/lib/db';
 import type { Prisma } from '@prisma/client';
 
 export type NotificationType = 'invoice_status' | 'user_assignment';
-export type InvoiceStatus = 'unpaid' | 'partial' | 'paid';
+export type InvoiceStatus = 'unpaid' | 'partial' | 'paid' | 'refunded';
 
 const STATUS_LABELS: Record<InvoiceStatus, string> = {
   unpaid: 'Unpaid',
   partial: 'Partially Paid',
-  paid: 'Paid'
+  paid: 'Paid',
+  refunded: 'Refunded'
 };
 
 type CreateNotificationInput = {
@@ -18,9 +19,20 @@ type CreateNotificationInput = {
   data?: Prisma.InputJsonValue;
 };
 
-export const determineInvoiceStatus = (totalAmount: number, paidAmount: number): InvoiceStatus => {
+export const determineInvoiceStatus = (
+  totalAmount: number,
+  paidAmount: number,
+  creditAppliedAmount = 0,
+  refundedAmount = 0
+): InvoiceStatus => {
+  if (refundedAmount + 0.01 >= totalAmount && totalAmount > 0) {
+    return 'refunded';
+  }
+
+  const effectivePaid = Math.max(0, paidAmount + creditAppliedAmount - refundedAmount);
+
   const normalizedTotal = Math.max(0, Number(totalAmount) || 0);
-  const normalizedPaid = Math.max(0, Number(paidAmount) || 0);
+  const normalizedPaid = Math.max(0, Number(effectivePaid) || 0);
 
   if (normalizedPaid <= 0) {
     return 'unpaid';

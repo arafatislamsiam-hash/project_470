@@ -52,6 +52,20 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
           reason: true,
           branch: true
         }
+      },
+      creditNotes: {
+        include: {
+          applications: {
+            include: {
+              appliedInvoice: {
+                select: {
+                  id: true,
+                  invoiceNo: true
+                }
+              }
+            }
+          }
+        }
       }
     }
   });
@@ -64,6 +78,18 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
   if (!session.user?.permissions?.VIEW_ALL_INVOICES && invoice.createdBy !== session.user?.id) {
     notFound();
   }
+
+  const appliedCreditRecords = await prisma.creditNoteApplication.findMany({
+    where: { appliedInvoiceId: id },
+    include: {
+      creditNote: {
+        select: {
+          id: true,
+          creditNo: true
+        }
+      }
+    }
+  });
 
   // Convert Decimal objects to numbers for client component
   const serializedInvoice = {
@@ -78,6 +104,32 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
     discountAmount: Number(invoice.discountAmount),
     totalAmount: Number(invoice.totalAmount),
     paidAmount: Number((invoice).paidAmount || 0),
+    status: invoice.status,
+    creditAppliedAmount: Number(invoice.creditAppliedAmount ?? 0),
+    refundedAmount: Number(invoice.refundedAmount ?? 0),
+    appliedCredits: appliedCreditRecords.map((record) => ({
+      id: record.id,
+      creditNoteId: record.creditNoteId,
+      creditNo: record.creditNote?.creditNo ?? record.creditNoteId,
+      amount: Number(record.appliedAmount)
+    })),
+    creditNotes: invoice.creditNotes.map((note) => ({
+      id: note.id,
+      creditNo: note.creditNo,
+      type: note.type,
+      status: note.status,
+      reason: note.reason,
+      notes: note.notes,
+      totalAmount: Number(note.totalAmount),
+      remainingAmount: Number(note.remainingAmount),
+      createdAt: note.createdAt.toISOString(),
+      applications: note.applications.map((application) => ({
+        id: application.id,
+        appliedInvoiceId: application.appliedInvoiceId,
+        appliedAmount: Number(application.appliedAmount),
+        appliedInvoiceNo: application.appliedInvoice?.invoiceNo ?? ''
+      }))
+    })),
     appointment: invoice.appointment ? {
       id: invoice.appointment.id,
       status: invoice.appointment.status,

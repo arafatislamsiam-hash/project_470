@@ -1,3 +1,4 @@
+import { recordCreditNoteHistory, resolveCreditNoteStatus } from '@/lib/credit-notes';
 import { prisma } from '@/lib/db';
 import { generateInvoiceNumber } from '@/lib/invoice-utils';
 import { determineInvoiceStatus, notifyInvoiceStatusChange } from '@/lib/notifications';
@@ -16,6 +17,113 @@ type InvoiceLinePayload = {
   isManual: boolean;
 };
 
+type AppliedCreditPayload = {
+  creditNoteId: string;
+  amount: number;
+};
+
+type CreditNoteState = {
+  remaining: number;
+  total: number;
+};
+
+class ApiError extends Error {
+  public status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+const parseAppliedCreditsInput = (input: unknown): AppliedCreditPayload[] => {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  const accumulator = new Map<string, number>();
+
+  for (const entry of input) {
+    if (!entry || typeof entry !== 'object') {
+      continue;
+    }
+
+    const creditNoteId = typeof (entry as { creditNoteId?: unknown }).creditNoteId === 'string'
+      ? (entry as { creditNoteId: string }).creditNoteId
+      : null;
+    const rawAmount = Number((entry as { amount?: unknown }).amount ?? 0);
+
+    if (!creditNoteId || Number.isNaN(rawAmount) || rawAmount <= 0) {
+      continue;
+    }
+
+    const current = accumulator.get(creditNoteId) ?? 0;
+    accumulator.set(creditNoteId, current + rawAmount);
+  }
+
+  return Array.from(accumulator.entries()).map(([creditNoteId, amount]) => ({ creditNoteId, amount }));
+};
+
+const sumAppliedCredits = (credits: AppliedCreditPayload[]) =>
+  credits.reduce((sum, credit) => sum + credit.amount, 0);
+
+const toCreditNoteStateMap = (
+  notes: Array<{ id: string; remainingAmount: unknown; totalAmount: unknown }>
+) => {
+  const map = new Map<string, CreditNoteState>();
+  notes.forEach((note) => {
+    map.set(note.id, {
+      remaining: Number(note.remainingAmount),
+      total: Number(note.totalAmount)
+    });
+  });
+  return map;
+};
+
+const ensureCreditAvailability = (
+  credits: AppliedCreditPayload[],
+  stateMap: Map<string, CreditNoteState>
+) => {
+  for (const credit of credits) {
+    const noteState = stateMap.get(credit.creditNoteId);
+    if (!noteState) {
+      throw new ApiError(400, 'One or more credits are unavailable or already closed.');
+    }
+
+    if (credit.amount - 0.01 > noteState.remaining) {
+      throw new ApiError(
+        400,
+        `Credit note ${credit.creditNoteId} does not have enough remaining balance.`
+      );
+    }
+  }
+};
+
+const fetchCreditNoteStates = async (
+  patientId: string | null,
+  creditNoteIds: string[],
+  includeClosed = false
+) => {
+  if (creditNoteIds.length === 0) {
+    return new Map<string, CreditNoteState>();
+  }
+
+  const notes = await prisma.creditNote.findMany({
+    where: {
+      id: { in: creditNoteIds },
+      ...(patientId ? { patientId } : {}),
+      ...(includeClosed ? {} : { status: { in: ['open', 'partial'] } })
+    },
+    select: {
+      id: true,
+      remainingAmount: true,
+      totalAmount: true
+    }
+  });
+
+  return toCreditNoteStateMap(notes);
+};
+
 export async function POST(request: NextRequest) {
   try {
     const session = await getSessionWithPermissions();
@@ -28,7 +136,17 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { items, discount = 0, discountType = 'percentage', patientId, branch, paidAmount = 0, corporateId, appointmentId } = body;
+    const {
+      items,
+      discount = 0,
+      discountType = 'percentage',
+      patientId,
+      branch,
+      paidAmount = 0,
+      corporateId,
+      appointmentId,
+      appliedCredits = []
+    } = body;
 
     if (!items || !Array.isArray(items) || items.length === 0) {
       return NextResponse.json(
@@ -55,6 +173,13 @@ export async function POST(request: NextRequest) {
         { status: 404 }
       );
     }
+
+    const normalizedAppliedCredits = parseAppliedCreditsInput(appliedCredits);
+    const creditNoteStateMap = await fetchCreditNoteStates(
+      patientId,
+      normalizedAppliedCredits.map((credit) => credit.creditNoteId)
+    );
+    ensureCreditAvailability(normalizedAppliedCredits, creditNoteStateMap);
 
     let appointmentToLink: {
       id: string;
@@ -202,7 +327,17 @@ export async function POST(request: NextRequest) {
     }
 
     const finalTotal = Math.max(0, calculatedSubtotal - totalItemDiscounts - calculatedDiscountAmount);
-    const invoiceStatus = determineInvoiceStatus(finalTotal, parseFloat(paidAmount.toString()));
+    const appliedCreditTotal = sumAppliedCredits(normalizedAppliedCredits);
+
+    if (appliedCreditTotal - 0.01 > finalTotal) {
+      throw new ApiError(400, 'Credits cannot exceed the invoice total.');
+    }
+
+    const invoiceStatus = determineInvoiceStatus(
+      finalTotal,
+      parseFloat(paidAmount.toString()),
+      appliedCreditTotal
+    );
 
     // Create invoice with items and update inventory atomically
     const invoice = await prisma.$transaction(async (tx) => {
@@ -219,6 +354,7 @@ export async function POST(request: NextRequest) {
           totalAmount: finalTotal,
           status: invoiceStatus,
           paidAmount: parseFloat(paidAmount.toString()),
+          creditAppliedAmount: appliedCreditTotal,
           createdBy: session.user.id,
           appointmentId: appointmentToLink?.id,
           items: {
@@ -232,6 +368,16 @@ export async function POST(request: NextRequest) {
               product: {
                 include: {
                   category: true
+                }
+              }
+            }
+          },
+          appliedCreditRecords: {
+            include: {
+              creditNote: {
+                select: {
+                  id: true,
+                  creditNo: true
                 }
               }
             }
@@ -276,6 +422,47 @@ export async function POST(request: NextRequest) {
         });
       }
 
+      if (appliedCreditTotal > 0) {
+        for (const credit of normalizedAppliedCredits) {
+          const state = creditNoteStateMap.get(credit.creditNoteId);
+          if (!state) {
+            continue;
+          }
+
+          state.remaining = Math.max(0, state.remaining - credit.amount);
+
+          await tx.creditNoteApplication.create({
+            data: {
+              creditNoteId: credit.creditNoteId,
+              appliedInvoiceId: createdInvoice.id,
+              appliedAmount: credit.amount,
+              appliedBy: session.user.id
+            }
+          });
+
+          await tx.creditNote.update({
+            where: { id: credit.creditNoteId },
+            data: {
+              remainingAmount: state.remaining,
+              status: resolveCreditNoteStatus(state.remaining, state.total)
+            }
+          });
+
+          await recordCreditNoteHistory(
+            {
+              creditNoteId: credit.creditNoteId,
+              action: 'applied',
+              actorId: session.user.id,
+              metadata: {
+                invoiceId: createdInvoice.id,
+                amount: credit.amount
+              }
+            },
+            tx
+          );
+        }
+      }
+
       return createdInvoice;
     });
 
@@ -286,6 +473,9 @@ export async function POST(request: NextRequest) {
 
   } catch (error) {
     console.error('Error creating invoice:', error);
+    if (error instanceof ApiError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }
@@ -336,6 +526,16 @@ export async function GET(request: NextRequest) {
               }
             }
           }
+        },
+        appliedCreditRecords: {
+          include: {
+            creditNote: {
+              select: {
+                id: true,
+                creditNo: true
+              }
+            }
+          }
         }
       },
       // If user doesn't have VIEW_ALL_INVOICES permission, only show their invoices
@@ -378,7 +578,19 @@ export async function PUT(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { id, items, discount = 0, discountType = 'percentage', patientId, branch, paidAmount = 0, corporateId } = body;
+    const {
+      id,
+      items,
+      discount = 0,
+      discountType = 'percentage',
+      patientId,
+      branch,
+      paidAmount = 0,
+      corporateId,
+      appliedCredits = []
+    } = body;
+
+    const normalizedAppliedCredits = parseAppliedCreditsInput(appliedCredits);
 
     if (!id) {
       return NextResponse.json(
@@ -416,7 +628,10 @@ export async function PUT(request: NextRequest) {
     // Check if invoice exists and user has permission to update it
     const existingInvoice = await prisma.invoice.findUnique({
       where: { id },
-      include: { items: true }
+      include: {
+        items: true,
+        appliedCreditRecords: true
+      }
     });
 
     if (!existingInvoice) {
@@ -433,6 +648,19 @@ export async function PUT(request: NextRequest) {
         { status: 403 }
       );
     }
+
+    const existingCreditRecords = existingInvoice.appliedCreditRecords ?? [];
+    const releaseCreditIds = existingCreditRecords.map((record) => record.creditNoteId);
+    const newCreditIds = normalizedAppliedCredits.map((credit) => credit.creditNoteId);
+
+    const creditNoteStateMap = await fetchCreditNoteStates(null, releaseCreditIds, true);
+    const newCreditStates = await fetchCreditNoteStates(patientId, newCreditIds, true);
+    ensureCreditAvailability(normalizedAppliedCredits, newCreditStates);
+    newCreditStates.forEach((state, id) => {
+      if (!creditNoteStateMap.has(id)) {
+        creditNoteStateMap.set(id, state);
+      }
+    });
 
     const previousUsage: Record<string, number> = {};
     existingInvoice.items.forEach((item) => {
@@ -536,7 +764,19 @@ export async function PUT(request: NextRequest) {
     }
 
     const finalTotal = Math.max(0, calculatedSubtotal - totalItemDiscounts - calculatedDiscountAmount);
-    const updatedStatus = determineInvoiceStatus(finalTotal, parseFloat(paidAmount.toString()));
+    const appliedCreditTotal = sumAppliedCredits(normalizedAppliedCredits);
+
+    if (appliedCreditTotal - 0.01 > finalTotal) {
+      throw new ApiError(400, 'Credits cannot exceed the invoice total.');
+    }
+
+    const refundedAmount = Number(existingInvoice.refundedAmount ?? 0);
+    const updatedStatus = determineInvoiceStatus(
+      finalTotal,
+      parseFloat(paidAmount.toString()),
+      appliedCreditTotal,
+      refundedAmount
+    );
 
     const inventoryAdjustments: Record<string, number> = {};
     const allProductIds = new Set([...Object.keys(previousUsage), ...Object.keys(productUsage)]);
@@ -564,6 +804,7 @@ export async function PUT(request: NextRequest) {
           totalAmount: finalTotal,
           status: updatedStatus,
           paidAmount: parseFloat(paidAmount.toString()),
+          creditAppliedAmount: appliedCreditTotal,
           updatedAt: new Date(),
           items: {
             create: invoiceItems
@@ -576,6 +817,16 @@ export async function PUT(request: NextRequest) {
               product: {
                 include: {
                   category: true
+                }
+              }
+            }
+          },
+          appliedCreditRecords: {
+            include: {
+              creditNote: {
+                select: {
+                  id: true,
+                  creditNo: true
                 }
               }
             }
@@ -611,6 +862,83 @@ export async function PUT(request: NextRequest) {
           )
       );
 
+      if (existingCreditRecords.length > 0) {
+        for (const record of existingCreditRecords) {
+          await tx.creditNoteApplication.delete({
+            where: { id: record.id }
+          });
+
+          const state = creditNoteStateMap.get(record.creditNoteId);
+          if (!state) {
+            continue;
+          }
+
+          state.remaining += Number(record.appliedAmount);
+
+          await tx.creditNote.update({
+            where: { id: record.creditNoteId },
+            data: {
+              remainingAmount: state.remaining,
+              status: resolveCreditNoteStatus(state.remaining, state.total)
+            }
+          });
+
+          await recordCreditNoteHistory(
+            {
+              creditNoteId: record.creditNoteId,
+              action: 'released',
+              actorId: session.user.id,
+              metadata: {
+                invoiceId: invoiceRecord.id,
+                amount: Number(record.appliedAmount)
+              }
+            },
+            tx
+          );
+        }
+      }
+
+      if (appliedCreditTotal > 0) {
+        for (const credit of normalizedAppliedCredits) {
+          const state = creditNoteStateMap.get(credit.creditNoteId);
+          if (!state) {
+            continue;
+          }
+
+          state.remaining = Math.max(0, state.remaining - credit.amount);
+
+          await tx.creditNoteApplication.create({
+            data: {
+              creditNoteId: credit.creditNoteId,
+              appliedInvoiceId: invoiceRecord.id,
+              appliedAmount: credit.amount,
+              appliedBy: session.user.id
+            }
+          });
+
+          await tx.creditNote.update({
+            where: { id: credit.creditNoteId },
+            data: {
+              remainingAmount: state.remaining,
+              status: resolveCreditNoteStatus(state.remaining, state.total)
+            }
+          });
+
+          await recordCreditNoteHistory(
+            {
+              creditNoteId: credit.creditNoteId,
+              action: 'applied',
+              actorId: session.user.id,
+              metadata: {
+                invoiceId: invoiceRecord.id,
+                amount: credit.amount
+              }
+            },
+            tx
+          );
+        }
+      }
+
       return invoiceRecord;
     });
 
@@ -632,6 +960,9 @@ export async function PUT(request: NextRequest) {
 
   } catch (error) {
     console.error('Error updating invoice:', error);
+    if (error instanceof ApiError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

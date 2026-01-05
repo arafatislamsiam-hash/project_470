@@ -3,11 +3,13 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { useState } from 'react';
 
 interface InvoiceViewProps {
   invoice: {
     id: string;
     invoiceNo: string;
+    status: string;
     patientId: number;
     patientName: string;
     patientMobile: string;
@@ -19,6 +21,8 @@ interface InvoiceViewProps {
     discountAmount: number;
     totalAmount: number;
     paidAmount: number;
+    creditAppliedAmount: number;
+    refundedAmount: number;
     createdAt: Date;
     appointment?: {
       id: string;
@@ -48,11 +52,46 @@ interface InvoiceViewProps {
         };
       } | null;
     }>;
+    appliedCredits?: {
+      id: string;
+      creditNoteId: string;
+      creditNo: string;
+      amount: number;
+    }[];
+    creditNotes?: {
+      id: string;
+      creditNo: string;
+      type: string;
+      status: string;
+      reason?: string | null;
+      notes?: string | null;
+      totalAmount: number;
+      remainingAmount: number;
+      createdAt: string;
+      applications: Array<{
+        id: string;
+        appliedInvoiceId: string;
+        appliedInvoiceNo: string;
+        appliedAmount: number;
+      }>;
+    }[];
   };
 }
 
+const STATUS_STYLES: Record<string, string> = {
+  paid: 'bg-green-100 text-green-800',
+  partial: 'bg-yellow-100 text-yellow-800',
+  unpaid: 'bg-gray-100 text-gray-700',
+  refunded: 'bg-red-100 text-red-700'
+};
+
 export default function InvoiceView({ invoice }: InvoiceViewProps) {
   const router = useRouter();
+  const [showRefundModal, setShowRefundModal] = useState(false);
+  const [refundAmount, setRefundAmount] = useState('');
+  const [refundReason, setRefundReason] = useState('');
+  const [refundError, setRefundError] = useState('');
+  const [refundLoading, setRefundLoading] = useState(false);
   const appointmentInfo = invoice.appointment
     ? {
       ...invoice.appointment,
@@ -62,6 +101,10 @@ export default function InvoiceView({ invoice }: InvoiceViewProps) {
       })
     }
     : null;
+  const appliedCreditList = invoice.appliedCredits ?? [];
+  const creditNotes = invoice.creditNotes ?? [];
+  const statusBadge = STATUS_STYLES[invoice.status] ?? STATUS_STYLES.unpaid;
+  const refundableRemaining = Math.max(0, invoice.totalAmount - invoice.refundedAmount);
 
   const handlePrint = () => {
     const printWindow = window.open('', '_blank');
@@ -520,6 +563,52 @@ export default function InvoiceView({ invoice }: InvoiceViewProps) {
     printWindow.print();
   };
 
+  const handleRefundSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setRefundError('');
+
+    const numericAmount = Number(refundAmount);
+    if (Number.isNaN(numericAmount) || numericAmount <= 0) {
+      setRefundError('Enter an amount greater than zero.');
+      return;
+    }
+
+    if (numericAmount - 0.01 > refundableRemaining) {
+      setRefundError('Amount exceeds the refundable balance.');
+      return;
+    }
+
+    try {
+      setRefundLoading(true);
+      const response = await fetch('/api/credit-notes', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          invoiceId: invoice.id,
+          amount: numericAmount,
+          reason: refundReason || undefined
+        })
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        throw new Error(data?.error ?? 'Failed to issue credit note.');
+      }
+
+      setShowRefundModal(false);
+      setRefundAmount('');
+      setRefundReason('');
+      router.refresh();
+    } catch (err) {
+      console.error(err);
+      setRefundError(err instanceof Error ? err.message : 'Failed to issue credit note.');
+    } finally {
+      setRefundLoading(false);
+    }
+  };
+
   const handleDeleteInvoice = async () => {
     const response = await fetch(`/api/invoices`, {
       method: 'DELETE',
@@ -548,6 +637,9 @@ export default function InvoiceView({ invoice }: InvoiceViewProps) {
             <p className="mt-1 max-w-2xl text-sm text-gray-500">
               Created on {invoice.createdAt.toLocaleDateString()}
             </p>
+            <span className={`mt-2 inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${statusBadge}`}>
+              {invoice.status.toUpperCase()}
+            </span>
           </div>
           <div className="space-x-2">
             <Link
@@ -562,6 +654,14 @@ export default function InvoiceView({ invoice }: InvoiceViewProps) {
             >
               Print PDF
             </button>
+            {refundableRemaining > 0 && (
+              <button
+                onClick={() => setShowRefundModal(true)}
+                className="bg-purple-600 hover:bg-purple-700 cursor-pointer text-white px-4 py-2 rounded-md text-sm font-medium"
+              >
+                Issue Credit Note
+              </button>
+            )}
             <button
               onClick={handleDeleteInvoice}
               className="bg-red-600 hover:bg-red-700 cursor-pointer text-white px-4 py-2 rounded-md text-sm font-medium"
@@ -570,6 +670,28 @@ export default function InvoiceView({ invoice }: InvoiceViewProps) {
             </button>
           </div>
         </div>
+      </div>
+      <div className="px-4 py-4 border-b border-gray-100 bg-gray-50">
+        <dl className="grid grid-cols-1 gap-4 text-sm text-gray-600 sm:grid-cols-3">
+          <div className="rounded-md border border-gray-200 bg-white p-3">
+            <dt className="font-medium text-gray-500">Credits Applied</dt>
+            <dd className="mt-1 text-lg font-semibold text-gray-900">
+              ৳{invoice.creditAppliedAmount.toFixed(2)}
+            </dd>
+          </div>
+          <div className="rounded-md border border-gray-200 bg-white p-3">
+            <dt className="font-medium text-gray-500">Refunded to Date</dt>
+            <dd className="mt-1 text-lg font-semibold text-gray-900">
+              ৳{invoice.refundedAmount.toFixed(2)}
+            </dd>
+          </div>
+          <div className="rounded-md border border-gray-200 bg-white p-3">
+            <dt className="font-medium text-gray-500">Refundable Balance</dt>
+            <dd className="mt-1 text-lg font-semibold text-gray-900">
+              ৳{refundableRemaining.toFixed(2)}
+            </dd>
+          </div>
+        </dl>
       </div>
 
       {appointmentInfo && (
@@ -584,6 +706,96 @@ export default function InvoiceView({ invoice }: InvoiceViewProps) {
           </div>
         </div>
       )}
+
+      {appliedCreditList.length > 0 && (
+        <div className="mx-4 my-4 rounded-md border border-indigo-200 bg-indigo-50 px-4 py-4">
+          <h4 className="text-sm font-semibold text-indigo-900">Credits Applied to this Invoice</h4>
+          <ul className="mt-2 space-y-1 text-sm text-indigo-800">
+            {appliedCreditList.map((credit) => (
+              <li key={credit.id} className="flex justify-between">
+                <span>{credit.creditNo}</span>
+                <span>৳{credit.amount.toFixed(2)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="mx-4 my-4 rounded-md border border-gray-200 bg-white px-4 py-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h4 className="text-sm font-semibold text-gray-900">Credit Notes & Refunds</h4>
+            <p className="text-xs text-gray-500">Track issued credit notes and how they were applied.</p>
+          </div>
+          {refundableRemaining > 0 && (
+            <button
+              onClick={() => setShowRefundModal(true)}
+              className="text-sm font-medium text-purple-600 hover:text-purple-800"
+            >
+              + Issue Credit Note
+            </button>
+          )}
+        </div>
+
+        {creditNotes.length === 0 ? (
+          <p className="mt-3 text-sm text-gray-500">No credit notes have been issued for this invoice yet.</p>
+        ) : (
+          <div className="mt-3 space-y-4">
+            {creditNotes.map((note) => {
+              const badgeStyle =
+                note.status === 'closed'
+                  ? 'bg-green-100 text-green-800'
+                  : note.status === 'partial'
+                    ? 'bg-yellow-100 text-yellow-800'
+                    : 'bg-blue-100 text-blue-800';
+              return (
+                <div key={note.id} className="rounded-md border border-gray-100 p-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-semibold text-gray-900">{note.creditNo}</p>
+                      <p className="text-xs text-gray-500">
+                        {note.type.toUpperCase()} • {new Date(note.createdAt).toLocaleDateString()}
+                      </p>
+                    </div>
+                    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${badgeStyle}`}>
+                      {note.status.toUpperCase()}
+                    </span>
+                  </div>
+                  <dl className="mt-3 grid grid-cols-2 gap-2 text-xs text-gray-600 sm:grid-cols-4">
+                    <div>
+                      <dt className="text-gray-500">Issued Amount</dt>
+                      <dd className="font-medium text-gray-900">৳{note.totalAmount.toFixed(2)}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-gray-500">Remaining</dt>
+                      <dd className="font-medium text-gray-900">৳{note.remainingAmount.toFixed(2)}</dd>
+                    </div>
+                    {note.reason && (
+                      <div className="col-span-2 sm:col-span-1">
+                        <dt className="text-gray-500">Reason</dt>
+                        <dd className="font-medium text-gray-900">{note.reason}</dd>
+                      </div>
+                    )}
+                  </dl>
+                  {note.applications.length > 0 && (
+                    <div className="mt-2">
+                      <p className="text-xs font-medium text-gray-500">Applied To</p>
+                      <ul className="mt-1 space-y-1 text-xs text-gray-700">
+                        {note.applications.map((application) => (
+                          <li key={application.id} className="flex justify-between">
+                            <span>Invoice #{application.appliedInvoiceNo || application.appliedInvoiceId}</span>
+                            <span>৳{application.appliedAmount.toFixed(2)}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       {/* Invoice content for PDF generation - Exact Dental Clinic Format */}
       <div id="invoice-content" className="pt-8 bg-white relative" style={{ fontFamily: 'Arial, sans-serif' }}>
@@ -778,6 +990,65 @@ export default function InvoiceView({ invoice }: InvoiceViewProps) {
           </div>
         </div>
       </div>
+      {showRefundModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
+            <h3 className="text-lg font-semibold text-gray-900">Issue Credit Note</h3>
+            <p className="mt-1 text-sm text-gray-500">
+              Refundable balance: ৳{refundableRemaining.toFixed(2)}
+            </p>
+            <form onSubmit={handleRefundSubmit} className="mt-4 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700">
+                  Amount (৳)
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max={refundableRemaining}
+                  value={refundAmount}
+                  onChange={(event) => setRefundAmount(event.target.value)}
+                  className="mt-1 block w-full rounded-md border-gray-300 py-2 px-3 shadow-sm focus:border-purple-500 focus:outline-none focus:ring-purple-500 sm:text-sm"
+                  placeholder="0.00"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">
+                  Reason (optional)
+                </label>
+                <textarea
+                  value={refundReason}
+                  onChange={(event) => setRefundReason(event.target.value)}
+                  className="mt-1 block w-full rounded-md border-gray-300 py-2 px-3 shadow-sm focus:border-purple-500 focus:outline-none focus:ring-purple-500 sm:text-sm"
+                  rows={3}
+                  placeholder="Enter a note for this refund"
+                />
+              </div>
+              {refundError && <p className="text-sm text-red-600">{refundError}</p>}
+              <div className="flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowRefundModal(false);
+                    setRefundError('');
+                  }}
+                  className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={refundLoading}
+                  className="rounded-md bg-purple-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-purple-500 disabled:opacity-50"
+                >
+                  {refundLoading ? 'Issuing…' : 'Issue Credit Note'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

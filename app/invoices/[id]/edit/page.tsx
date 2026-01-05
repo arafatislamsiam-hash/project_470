@@ -68,6 +68,18 @@ export default async function EditInvoicePage({ params }: PageProps) {
     notFound();
   }
 
+  const appliedCreditRecords = await prisma.creditNoteApplication.findMany({
+    where: { appliedInvoiceId: id },
+    include: {
+      creditNote: {
+        select: {
+          id: true,
+          creditNo: true
+        }
+      }
+    }
+  });
+
   // Convert Decimal objects to numbers for client component
   const serializedInvoice = {
     ...invoice,
@@ -90,6 +102,11 @@ export default async function EditInvoicePage({ params }: PageProps) {
       reason: invoice.appointment.reason,
       branch: invoice.appointment.branch
     } : null,
+    appliedCredits: appliedCreditRecords.map((record) => ({
+      creditNoteId: record.creditNoteId,
+      creditNo: record.creditNote?.creditNo ?? record.creditNoteId,
+      amount: Number(record.appliedAmount)
+    })),
     items: invoice.items.map(item => ({
       ...item,
       unitPrice: Number(item.unitPrice),

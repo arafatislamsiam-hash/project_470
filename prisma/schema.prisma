@@ -8,19 +8,21 @@ datasource db {
 }
 
 model User {
-  id                 String              @id @default(cuid())
-  email              String              @unique
+  id                 String                  @id @default(cuid())
+  email              String                  @unique
   password           String
   name               String
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
   createdBy          String?
   invoices           Invoice[]
   roles              UserRole[]
-  creator            User?               @relation("UserCreator", fields: [createdBy], references: [id])
-  createdUsers       User[]              @relation("UserCreator")
+  creator            User?                   @relation("UserCreator", fields: [createdBy], references: [id])
+  createdUsers       User[]                  @relation("UserCreator")
   performanceTargets PerformanceTarget[]
   notifications      Notification[]
+  issuedCreditNotes  CreditNote[]            @relation("CreditNotesIssued")
+  appliedCreditNotes CreditNoteApplication[] @relation("CreditNoteAppliedBy")
 
   @@map("users")
 }
@@ -85,6 +87,7 @@ model Patient {
   updatedAt     DateTime      @updatedAt
   invoices      Invoice[]
   appointments  Appointment[]
+  creditNotes   CreditNote[]
 
   @@map("patients")
 }
@@ -106,26 +109,30 @@ model Appointment {
 }
 
 model Invoice {
-  id             String        @id @default(cuid())
-  invoiceNo      String        @unique
-  status         String        @default("unpaid")
-  subtotal       Decimal       @default(0) @db.Decimal(10, 2)
-  discount       Decimal       @default(0) @db.Decimal(10, 2)
-  discountType   String        @default("percentage")
-  discountAmount Decimal       @default(0) @db.Decimal(10, 2)
-  totalAmount    Decimal       @db.Decimal(10, 2)
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
-  createdBy      String
-  patientId      String
-  branch         String?
-  corporateId    String?
-  paidAmount     Decimal       @default(0) @db.Decimal(10, 2)
-  appointmentId  String?       @unique
-  items          InvoiceItem[]
-  user           User          @relation(fields: [createdBy], references: [id])
-  patient        Patient       @relation(fields: [patientId], references: [id])
-  appointment    Appointment?  @relation(fields: [appointmentId], references: [id])
+  id                   String                  @id @default(cuid())
+  invoiceNo            String                  @unique
+  status               String                  @default("unpaid")
+  subtotal             Decimal                 @default(0) @db.Decimal(10, 2)
+  discount             Decimal                 @default(0) @db.Decimal(10, 2)
+  discountType         String                  @default("percentage")
+  discountAmount       Decimal                 @default(0) @db.Decimal(10, 2)
+  totalAmount          Decimal                 @db.Decimal(10, 2)
+  createdAt            DateTime                @default(now())
+  updatedAt            DateTime                @updatedAt
+  createdBy            String
+  patientId            String
+  branch               String?
+  corporateId          String?
+  paidAmount           Decimal                 @default(0) @db.Decimal(10, 2)
+  creditAppliedAmount  Decimal                 @default(0) @db.Decimal(10, 2)
+  refundedAmount       Decimal                 @default(0) @db.Decimal(10, 2)
+  appointmentId        String?                 @unique
+  items                InvoiceItem[]
+  user                 User                    @relation(fields: [createdBy], references: [id])
+  patient              Patient                 @relation(fields: [patientId], references: [id])
+  appointment          Appointment?            @relation(fields: [appointmentId], references: [id])
+  creditNotes          CreditNote[]
+  appliedCreditRecords CreditNoteApplication[] @relation("AppliedInvoiceCreditApplications")
 
   @@map("invoices")
 }
@@ -146,6 +153,60 @@ model InvoiceItem {
   product        Product? @relation(fields: [productId], references: [id])
 
   @@map("invoice_items")
+}
+
+model CreditNote {
+  id              String                  @id @default(cuid())
+  creditNo        String                  @unique
+  invoiceId       String
+  patientId       String
+  issuedBy        String
+  type            String
+  reason          String?
+  notes           String?
+  status          String                  @default("open")
+  totalAmount     Decimal                 @db.Decimal(10, 2)
+  remainingAmount Decimal                 @db.Decimal(10, 2)
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+  invoice         Invoice                 @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  patient         Patient                 @relation(fields: [patientId], references: [id])
+  issuedByUser    User                    @relation("CreditNotesIssued", fields: [issuedBy], references: [id])
+  applications    CreditNoteApplication[]
+  history         CreditNoteHistory[]
+
+  @@index([invoiceId])
+  @@index([patientId])
+  @@map("credit_notes")
+}
+
+model CreditNoteApplication {
+  id               String     @id @default(cuid())
+  creditNoteId     String
+  appliedInvoiceId String
+  appliedAmount    Decimal    @db.Decimal(10, 2)
+  appliedBy        String
+  createdAt        DateTime   @default(now())
+  creditNote       CreditNote @relation(fields: [creditNoteId], references: [id], onDelete: Cascade)
+  appliedInvoice   Invoice    @relation("AppliedInvoiceCreditApplications", fields: [appliedInvoiceId], references: [id], onDelete: Cascade)
+  appliedByUser    User       @relation("CreditNoteAppliedBy", fields: [appliedBy], references: [id])
+
+  @@index([creditNoteId])
+  @@index([appliedInvoiceId])
+  @@map("credit_note_applications")
+}
+
+model CreditNoteHistory {
+  id           String     @id @default(cuid())
+  creditNoteId String
+  action       String
+  actorId      String?
+  metadata     Json?
+  createdAt    DateTime   @default(now())
+  creditNote   CreditNote @relation(fields: [creditNoteId], references: [id], onDelete: Cascade)
+
+  @@index([creditNoteId])
+  @@map("credit_note_history")
 }
 
 model Counter {

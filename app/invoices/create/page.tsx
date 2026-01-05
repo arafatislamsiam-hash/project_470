@@ -1,6 +1,7 @@
 'use client';
 
 import Navigation from '@/components/navigation';
+import PatientCreditSelector, { AppliedCreditSelection } from '@/components/patient-credit-selector';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -83,6 +84,8 @@ export default function CreateInvoicePage() {
   const [selectedAppointmentId, setSelectedAppointmentId] = useState<string>('');
   const [appointmentsLoading, setAppointmentsLoading] = useState(false);
   const [appointmentsError, setAppointmentsError] = useState('');
+  const [appliedCredits, setAppliedCredits] = useState<AppliedCreditSelection[]>([]);
+  const [appliedCreditTotal, setAppliedCreditTotal] = useState(0);
   const selectedPatientId = selectedPatient?.id || '';
   const getProductById = useCallback((productId: string) => products.find(product => product.id === productId), [products]);
 
@@ -109,6 +112,13 @@ export default function CreateInvoicePage() {
   ), []);
 
   const isProductOutOfStock = useCallback((product: Product) => product.stockQuantity <= 0, []);
+  const handleCreditSelectionChange = useCallback(
+    (credits: AppliedCreditSelection[], total: number) => {
+      setAppliedCredits(credits);
+      setAppliedCreditTotal(total);
+    },
+    []
+  );
 
   // Debounced search for patient by mobile
   const debouncedSearchPatient = useCallback(
@@ -426,7 +436,7 @@ export default function CreateInvoicePage() {
   };
 
   const calculateDueAmount = () => {
-    return Math.max(0, calculateGrandTotal() - paidAmount);
+    return Math.max(0, calculateGrandTotal() - paidAmount - appliedCreditTotal);
   };
 
   const handleCreateNewPatient = async () => {
@@ -491,6 +501,8 @@ export default function CreateInvoicePage() {
     setSearchResults([]);
     setShowNewPatientModal(false);
     setNewPatientForm({ patientName: '', patientMobile: '' });
+    setAppliedCredits([]);
+    setAppliedCreditTotal(0);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -511,6 +523,12 @@ export default function CreateInvoicePage() {
 
     if (validItems.length === 0) {
       setError('Please add at least one valid product to the invoice.');
+      setLoading(false);
+      return;
+    }
+
+    if (appliedCreditTotal - 0.01 > calculateGrandTotal()) {
+      setError('Credits cannot exceed the invoice total.');
       setLoading(false);
       return;
     }
@@ -542,7 +560,8 @@ export default function CreateInvoicePage() {
           subtotal: calculateSubtotal(),
           itemDiscounts: calculateTotalDiscount(),
           discountAmount: calculateDiscountAmount(),
-          grandTotal: calculateGrandTotal()
+          grandTotal: calculateGrandTotal(),
+          appliedCredits
         }),
       });
 
@@ -680,6 +699,15 @@ export default function CreateInvoicePage() {
                     </div>
                   )}
                 </div>
+
+                {selectedPatient && (
+                  <div className="mb-6">
+                    <PatientCreditSelector
+                      patientId={selectedPatient.id}
+                      onChange={handleCreditSelectionChange}
+                    />
+                  </div>
+                )}
 
                 {selectedPatient && (
                   <div className="mb-6 border-t pt-6">
@@ -1117,6 +1145,12 @@ export default function CreateInvoicePage() {
                         <span>Paid:</span>
                         <span>৳{paidAmount.toFixed(2)}</span>
                       </div>
+                      {appliedCreditTotal > 0 && (
+                        <div className="flex justify-between text-sm text-blue-600">
+                          <span>Credits Applied:</span>
+                          <span>-৳{appliedCreditTotal.toFixed(2)}</span>
+                        </div>
+                      )}
                       <div className="flex justify-between text-sm font-medium text-orange-600">
                         <span>Due:</span>
                         <span>৳{calculateDueAmount().toFixed(2)}</span>
