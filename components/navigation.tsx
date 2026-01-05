@@ -43,22 +43,33 @@ export default function Navigation() {
               >
                 Dashboard
               </Link>
-              {permissions.CREATE_USER && (
+              {(permissions.CREATE_INVOICE || permissions.VIEW_ALL_INVOICES) && (
                 <Link
-                  href="/users"
+                  href="/dashboard/performance"
                   className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium"
                 >
-                  Users
+                  Forecast &amp; Goals
                 </Link>
               )}
-              {permissions.MANAGE_CATEGORIES && (
+
+              {permissions.CREATE_INVOICE && (
                 <Link
-                  href="/categories"
+                  href="/invoices/create"
                   className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium"
                 >
-                  Categories
+                  Create Invoice
                 </Link>
               )}
+
+              {permissions.VIEW_ALL_INVOICES && (
+                <Link
+                  href="/invoices"
+                  className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium"
+                >
+                  Invoices
+                </Link>
+              )}
+
               {permissions.MANAGE_PRODUCTS && (
                 <Link
                   href="/products"
@@ -67,6 +78,7 @@ export default function Navigation() {
                   Products
                 </Link>
               )}
+
               {permissions.MANAGE_PATIENT && (
                 <Link
                   href="/patients"
@@ -75,12 +87,30 @@ export default function Navigation() {
                   Patients
                 </Link>
               )}
-              {permissions.CREATE_INVOICE && (
+              {(permissions.MANAGE_PATIENT || permissions.CREATE_INVOICE) && (
                 <Link
-                  href="/invoices/create"
+                  href="/appointments"
                   className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium"
                 >
-                  Create Invoice
+                  Appointments
+                </Link>
+              )}
+
+              {permissions.MANAGE_CATEGORIES && (
+                <Link
+                  href="/categories"
+                  className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium"
+                >
+                  Categories
+                </Link>
+              )}
+
+              {permissions.CREATE_USER && (
+                <Link
+                  href="/users"
+                  className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium"
+                >
+                  Users
                 </Link>
               )}
             </div>
@@ -132,22 +162,24 @@ export default function Navigation() {
           >
             Dashboard
           </Link>
-          {permissions.CREATE_USER && (
+          {(permissions.CREATE_INVOICE || permissions.VIEW_ALL_INVOICES) && (
             <Link
-              href="/users"
+              href="/dashboard/performance"
               className="text-gray-600 hover:text-gray-900 block px-3 py-2 rounded-md text-base font-medium"
             >
-              Users
+              Forecast &amp; Goals
             </Link>
           )}
-          {permissions.MANAGE_CATEGORIES && (
+
+          {permissions.CREATE_INVOICE && (
             <Link
-              href="/categories"
+              href="/invoices/create"
               className="text-gray-600 hover:text-gray-900 block px-3 py-2 rounded-md text-base font-medium"
             >
-              Categories
+              Create Invoice
             </Link>
           )}
+
           {permissions.MANAGE_PRODUCTS && (
             <Link
               href="/products"
@@ -156,6 +188,7 @@ export default function Navigation() {
               Products
             </Link>
           )}
+
           {permissions.MANAGE_PATIENT && (
             <Link
               href="/patients"
@@ -164,12 +197,30 @@ export default function Navigation() {
               Patients
             </Link>
           )}
-          {permissions.CREATE_INVOICE && (
+          {(permissions.MANAGE_PATIENT || permissions.CREATE_INVOICE) && (
             <Link
-              href="/invoices/create"
+              href="/appointments"
               className="text-gray-600 hover:text-gray-900 block px-3 py-2 rounded-md text-base font-medium"
             >
-              Create Invoice
+              Appointments
+            </Link>
+          )}
+
+          {permissions.MANAGE_CATEGORIES && (
+            <Link
+              href="/categories"
+              className="text-gray-600 hover:text-gray-900 block px-3 py-2 rounded-md text-base font-medium"
+            >
+              Categories
+            </Link>
+          )}
+
+          {permissions.CREATE_USER && (
+            <Link
+              href="/users"
+              className="text-gray-600 hover:text-gray-900 block px-3 py-2 rounded-md text-base font-medium"
+            >
+              Users
             </Link>
           )}
         </div>

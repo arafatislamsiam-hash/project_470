@@ -8,17 +8,18 @@ datasource db {
 }
 
 model User {
-  id           String     @id @default(cuid())
-  email        String     @unique
-  password     String
-  name         String
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
-  createdBy    String?
-  invoices     Invoice[]
-  roles        UserRole[]
-  creator      User?      @relation("UserCreator", fields: [createdBy], references: [id])
-  createdUsers User[]     @relation("UserCreator")
+  id                 String              @id @default(cuid())
+  email              String              @unique
+  password           String
+  name               String
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  createdBy          String?
+  invoices           Invoice[]
+  roles              UserRole[]
+  creator            User?               @relation("UserCreator", fields: [createdBy], references: [id])
+  createdUsers       User[]              @relation("UserCreator")
+  performanceTargets PerformanceTarget[]
 
   @@map("users")
 }
@@ -59,29 +60,48 @@ model Category {
 }
 
 model Product {
-  id           String        @id @default(cuid())
-  name         String
-  price        Decimal       @db.Decimal(10, 2)
-  description  String?
-  categoryId   String
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-  invoiceItems InvoiceItem[]
-  category     Category      @relation(fields: [categoryId], references: [id])
+  id                String        @id @default(cuid())
+  name              String
+  price             Decimal       @db.Decimal(10, 2)
+  description       String?
+  categoryId        String
+  stockQuantity     Int           @default(0)
+  lowStockThreshold Int           @default(0)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  invoiceItems      InvoiceItem[]
+  category          Category      @relation(fields: [categoryId], references: [id])
 
   @@map("products")
 }
 
 model Patient {
-  id            String    @id @default(cuid())
-  patientId     Int       @default(autoincrement())
+  id            String        @id @default(cuid())
+  patientId     Int           @default(autoincrement())
   patientName   String
-  patientMobile String    @unique
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  patientMobile String        @unique
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
   invoices      Invoice[]
+  appointments  Appointment[]
 
   @@map("patients")
+}
+
+model Appointment {
+  id              String   @id @default(cuid())
+  patientId       String
+  appointmentDate DateTime
+  status          String   @default("scheduled")
+  reason          String?
+  notes           String?
+  branch          String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  patient         Patient  @relation(fields: [patientId], references: [id])
+  invoice         Invoice?
+
+  @@map("appointments")
 }
 
 model Invoice {
@@ -99,9 +119,11 @@ model Invoice {
   branch         String?
   corporateId    String?
   paidAmount     Decimal       @default(0) @db.Decimal(10, 2)
+  appointmentId  String?       @unique
   items          InvoiceItem[]
   user           User          @relation(fields: [createdBy], references: [id])
   patient        Patient       @relation(fields: [patientId], references: [id])
+  appointment    Appointment?  @relation(fields: [appointmentId], references: [id])
 
   @@map("invoices")
 }
@@ -130,4 +152,23 @@ model Counter {
   value Int    @default(0)
 
   @@map("counters")
+}
+
+model PerformanceTarget {
+  id            String   @id @default(cuid())
+  name          String?
+  periodType    String
+  periodStart   DateTime
+  periodEnd     DateTime
+  branch        String?
+  team          String?
+  revenueTarget Decimal  @default(0) @db.Decimal(12, 2)
+  profitTarget  Decimal  @default(0) @db.Decimal(12, 2)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  createdBy     String?
+  notes         String?
+  creator       User?    @relation(fields: [createdBy], references: [id])
+
+  @@map("performance_targets")
 }
